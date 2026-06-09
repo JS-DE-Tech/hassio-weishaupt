@@ -152,8 +152,8 @@ class ConfigFlowTests(unittest.IsolatedAsyncioTestCase):
         """The setup/options field should use the requested HA slider config."""
         config = config_flow.SCAN_INTERVAL_SELECTOR.config
 
-        self.assertEqual(config.min, 30)
-        self.assertEqual(config.max, 300)
+        self.assertEqual(config.min, 10)
+        self.assertEqual(config.max, 600)
         self.assertEqual(config.step, 10)
         self.assertEqual(config.mode, "slider")
         self.assertEqual(config.unit_of_measurement, "s")

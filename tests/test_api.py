@@ -105,6 +105,13 @@ def vg(cmd: int, mi: int, mx: int, ox: int, os_val: int, vs: int) -> str:
     return f"{cmd:02x}{mi:02x}{mx:02x}{ox:04x}{os_val:02x}{vs:04x}"
 
 
+def vg_with_value(
+    cmd: int, mi: int, mx: int, ox: int, os_val: int, vs: int, value: int
+) -> str:
+    """Build a minimal response VG with value bytes."""
+    return f"{vg(cmd, mi, mx, ox, os_val, vs)}{value:0{vs * 2}x}"
+
+
 class ApiClientTests(unittest.IsolatedAsyncioTestCase):
     """Test API client behavior for empty device responses."""
 
@@ -160,6 +167,26 @@ class ApiClientTests(unittest.IsolatedAsyncioTestCase):
         sent_vg = client.payloads[0]["CAPI"]["N01"]["VG"]
         self.assertEqual(sent_vg[2:6], "0202")
 
+    async def test_probe_parameter_classifies_error_as_absent(self) -> None:
+        """CMD_ERROR should be a confirmed negative presence probe."""
+        client = ResponseClient(
+            capi_response(vg(api.CMD_ERROR, 0x04, 0x00, 0x2501, 0x00, 2))
+        )
+
+        status, data = await client.probe_parameter(0x04, 0x00, 0x2501, 0x00, 2)
+
+        self.assertEqual(status, api.ProbeStatus.ABSENT)
+        self.assertIsNotNone(data)
+
+    async def test_probe_parameter_classifies_empty_response_as_unknown(self) -> None:
+        """Empty responses should not be treated as confirmed absence."""
+        client = ResponseClient(None)
+
+        status, data = await client.probe_parameter(0x04, 0x00, 0x2501, 0x00, 2)
+
+        self.assertEqual(status, api.ProbeStatus.UNKNOWN)
+        self.assertIsNone(data)
+
     async def test_write_parameter_accepts_matching_ack(self) -> None:
         """A matching CMD_ACK should be accepted as a successful write."""
         client = ResponseClient(
@@ -204,6 +231,18 @@ class ApiClientTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(
             await client.write_parameter(0x02, 0x01, 0x2533, 0x02, 1, 6)
+        )
+
+    async def test_write_parameter_rejects_value_mismatch_when_ack_contains_value(
+        self,
+    ) -> None:
+        """ACK value payload should match the requested raw value when present."""
+        client = ResponseClient(
+            capi_response(vg_with_value(api.CMD_ACK, 0x03, 0x00, 0x2539, 0x02, 2, 501))
+        )
+
+        self.assertFalse(
+            await client.write_parameter(0x03, 0x00, 0x2539, 0x02, 2, 500)
         )
 
 

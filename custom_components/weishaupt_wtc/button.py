@@ -15,7 +15,12 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .sensor import DEVICE_GROUP_MODELS, _device_identifier, _device_name
+from .sensor import (
+    _device_identifier,
+    _device_model,
+    _device_name,
+    _is_system_device,
+)
 from .sensors import WeishauptDeviceGroup, WeishauptSensorDefinition
 
 _LOGGER = logging.getLogger(__name__)
@@ -73,9 +78,9 @@ class WeishauptButtonEntity(CoordinatorEntity, ButtonEntity):
             },
             name=_device_name(self.coordinator, group, self._sensor_def),
             manufacturer="Weishaupt",
-            model=DEVICE_GROUP_MODELS.get(group, "Unknown"),
+            model=_device_model(group, self._sensor_def),
         )
-        if group is not WeishauptDeviceGroup.SG:
+        if not _is_system_device(self._entry.entry_id, group, self._sensor_def):
             info["via_device"] = _device_identifier(
                 self._entry.entry_id, WeishauptDeviceGroup.SG
             )

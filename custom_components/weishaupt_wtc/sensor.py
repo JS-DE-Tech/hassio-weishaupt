@@ -16,7 +16,10 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 from .coordinator import WeishauptDataUpdateCoordinator
 from .heating_circuits import (
-    heating_circuit_device_suffix,
+    NUMBER_SENSOR_KEYS,
+    SELECT_SENSOR_KEYS,
+    WARM_WATER_SENSOR_KEYS,
+    device_suffix_for_sensor,
     heating_circuit_for_sensor,
 )
 from .parsing import (
@@ -51,6 +54,14 @@ DEVICE_GROUP_MODELS = {
 }
 
 
+DEVICE_SUFFIX_MODELS = {
+    "hk1": "Heizkreis",
+    "hk": "EM-HK Heizkreis",
+    "hk3": "EM-HK Heizkreis",
+    "ww": "Warmwasser",
+}
+
+
 def _device_identifier(
     entry_id: str,
     group: WeishauptDeviceGroup,
@@ -58,8 +69,8 @@ def _device_identifier(
 ) -> tuple[str, str]:
     """Return the device registry identifier for a Weishaupt group."""
     if sensor_def:
-        suffix = heating_circuit_device_suffix(sensor_def)
-        if suffix:
+        suffix = device_suffix_for_sensor(sensor_def)
+        if suffix != group.value:
             return (DOMAIN, f"{entry_id}_{suffix}")
     return (DOMAIN, f"{entry_id}_{group.value}")
 
@@ -82,7 +93,27 @@ def _device_name(
             heating_circuit,
             f"Heizkreis {heating_circuit}",
         )
+    if sensor_def.key in WARM_WATER_SENSOR_KEYS:
+        return "Weishaupt Warmwasser"
     return f"Weishaupt {DEVICE_GROUP_NAMES.get(group, group.value)}"
+
+
+def _device_model(group: WeishauptDeviceGroup, sensor_def: WeishauptSensorDefinition) -> str:
+    """Return a model name for logical devices."""
+    suffix = device_suffix_for_sensor(sensor_def)
+    return DEVICE_SUFFIX_MODELS.get(
+        suffix,
+        DEVICE_GROUP_MODELS.get(group, "Unknown"),
+    )
+
+
+def _is_system_device(
+    entry_id: str, group: WeishauptDeviceGroup, sensor_def: WeishauptSensorDefinition
+) -> bool:
+    """Return True when an entity belongs to the root system device."""
+    return _device_identifier(entry_id, group, sensor_def) == _system_device_identifier(
+        entry_id
+    )
 
 
 async def async_setup_entry(
@@ -104,8 +135,10 @@ async def async_setup_entry(
 
     entities: list[WeishauptSensorEntity] = []
     for sensor_def in coordinator.sensor_definitions:
-        # Skip creating a read-only sensor when a writable Select or Button exists
-        if sensor_def.key in {"sg_betriebsart_hk1_vorgabe", "sg_warmwasser_push"}:
+        # Skip creating read-only sensors when writable entities exist.
+        if sensor_def.key in (
+            SELECT_SENSOR_KEYS | NUMBER_SENSOR_KEYS | {"sg_warmwasser_push"}
+        ):
             continue
 
         entities.append(
@@ -169,9 +202,9 @@ class WeishauptSensorEntity(
             },
             name=_device_name(self.coordinator, group, self._sensor_def),
             manufacturer="Weishaupt",
-            model=DEVICE_GROUP_MODELS.get(group, "Unknown"),
+            model=_device_model(group, self._sensor_def),
         )
-        if group is not WeishauptDeviceGroup.SG:
+        if not _is_system_device(self._entry.entry_id, group, self._sensor_def):
             device_info["via_device"] = _system_device_identifier(self._entry.entry_id)
 
         return device_info
