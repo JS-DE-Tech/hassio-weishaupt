@@ -28,6 +28,7 @@ class WeishauptDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         sensor_definitions: list[WeishauptSensorDefinition] | None = None,
         active_heating_circuits: list[int] | None = None,
         heating_circuit_names: dict[int, str] | None = None,
+        active_device_groups: set[str] | None = None,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -43,6 +44,7 @@ class WeishauptDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.active_heating_circuits = active_heating_circuits or [1]
         self.heating_circuit_names = heating_circuit_names or {}
+        self.active_device_groups = active_device_groups or set()
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the Weishaupt device."""

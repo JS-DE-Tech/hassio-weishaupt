@@ -36,6 +36,14 @@ class WeishauptAuthError(WeishauptApiError):
     """Exception for authentication errors."""
 
 
+class ProbeStatus:
+    """Presence probe result values."""
+
+    PRESENT = "present"
+    ABSENT = "absent"
+    UNKNOWN = "unknown"
+
+
 def build_vg_frame(cmd: int, mi: int, mx: int, ox: int, os_val: int, vs: int) -> str:
     """Build a VG hex frame string for a CanApiJson request.
 
@@ -277,6 +285,48 @@ class WeishauptApiClient:
         )
         return key in results
 
+    async def probe_parameter(
+        self,
+        mi: int,
+        mx: int,
+        ox: int,
+        os_val: int,
+        vs: int,
+    ) -> tuple[str, dict[str, Any] | None]:
+        """Probe one register and classify the response for device detection."""
+        vg = build_read_vg(mi=mi, mx=mx, ox=ox, os_val=os_val, vs=vs)
+        payload = {
+            "ID": REQUEST_ID,
+            "SRC": SRC_DDC,
+            "CAPI": {"NN": 1, "N01": {"VG": vg}},
+        }
+
+        try:
+            response = await self._post(payload)
+        except WeishauptApiError as err:
+            _LOGGER.debug("Presence probe failed: %s", err)
+            return ProbeStatus.UNKNOWN, None
+
+        if not response or "CAPI" not in response:
+            return ProbeStatus.UNKNOWN, None
+
+        response_capi = response["CAPI"]
+        vg_str = response_capi.get("N01", {}).get("VG", "")
+        if not vg_str:
+            return ProbeStatus.UNKNOWN, None
+
+        try:
+            parsed = parse_vg_response(vg_str)
+        except (ValueError, WeishauptApiError) as err:
+            _LOGGER.debug("Failed to parse presence probe response: %s", err)
+            return ProbeStatus.UNKNOWN, None
+
+        if parsed["cmd"] == CMD_RESPONSE:
+            return ProbeStatus.PRESENT, parsed
+        if parsed["cmd"] == CMD_ERROR:
+            return ProbeStatus.ABSENT, parsed
+        return ProbeStatus.UNKNOWN, parsed
+
     async def write_parameter(
         self,
         mi: int,
@@ -364,6 +414,15 @@ class WeishauptApiClient:
                 mx,
                 ox,
                 ",".join(mismatches),
+            )
+            return False
+
+        if parsed["value_hex"] and parsed["value_int"] != value_int:
+            _LOGGER.debug(
+                "Write ACK value mismatch for MI=0x%02x MX=0x%02x OX=0x%04x",
+                mi,
+                mx,
+                ox,
             )
             return False
 

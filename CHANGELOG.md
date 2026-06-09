@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.0 - 2026-06-09
+
+- Feature: Move HK1 entities to a separate logical Home Assistant device while preserving their existing keys, CanApiJson addresses and unique IDs.
+- Feature: Move warm-water entities and the existing Warmwasser-Push button to a separate `Weishaupt Warmwasser` device.
+- Feature: Add writable `Systembetriebsart` select for Standby, Sommer and Automatik.
+- Feature: Add Number slider entities for `WW-Solltemperatur Normal` (50-60 °C) and `WW-Solltemperatur Absenk` (8-60 °C), using the existing confirmed temperature registers.
+- Feature: Register the Number platform and extend the scan interval slider to 10-600 seconds in 10 second steps.
+- Feature: Detect optional WTC, warm-water and solar groups during setup/reload; Solar is not created when its known registers are missing or only return sentinel values.
+- Feature: Add read-only `tools/dump_weishaupt_metadata.py` for local metadata inspection when investigating unconfirmed warm-water or maintenance registers.
+- Fix: Reject write ACKs that contain an unexpected value payload.
+- Migration: HK1 now uses the stable `<entry_id>_hk1` device identifier. Warm-water uses `<entry_id>_ww`. Existing entity unique IDs remain based on the original technical keys.
+- Note: No clearly confirmed permanent warm-water on/off register or warm-water operating-mode register was found, so no Switch or additional WW operating-mode Select is created. Maintenance data is not available through the currently documented registers.
+- Note: `wtc_abgastemperatur` remains on the WTC device and continues to treat `0x8000` and `0xFFFF` as unavailable.
+
 ## 0.3.0 - 2026-06-09
 
 - Feature: Detect external EM-HK heating circuits dynamically and support HK1, HK2 and HK3 without creating entities for circuits that do not answer the CanApiJson probe.

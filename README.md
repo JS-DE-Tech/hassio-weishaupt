@@ -53,7 +53,7 @@ http://admin:Admin123@wem-sg/ajax/CanApiJson.json
 3. Enter the IP address (or hostname) of your Systemgerät
 4. Optionally adjust username, password, scan interval, and the display names for heating circuits 1-3
 
-The scan interval is configurable from **30 to 300 seconds** in 10 second steps.
+The scan interval is configurable from **10 to 600 seconds** in 10 second steps.
 The same value and the heating circuit names can be changed later from the
 integration options. Saving options reloads the integration so the new polling
 interval and names take effect without removing the integration.
@@ -63,9 +63,12 @@ CanApiJson addresses do not depend on these names.
 
 ## Sensors
 
-The integration provides sensors across these device groups. External heating
-circuits are detected automatically and only circuits that return a valid
-CanApiJson `CMD_RESPONSE` are added.
+The integration provides sensors across logical Home Assistant devices. HK1 and
+warm water keep their existing technical CanApiJson keys and unique IDs, but are
+shown as separate devices. External heating circuits are detected automatically
+and only circuits that return a valid CanApiJson `CMD_RESPONSE` are added.
+Optional module devices such as Solar are only created when setup-time probing
+finds a plausible value rather than only missing responses or sentinel values.
 
 ### Systemgerät (SG) — Modbus 100-155
 - Betriebsart HK1 (Vorgabe / aktuell)
@@ -98,10 +101,27 @@ CanApiJson `CMD_RESPONSE` are added.
 - Vorlaufsolltemperaturen (Komfort / Normal / Absenk / Sonderniveau / aktuell)
 - Vorlaufisttemperatur
 
-HK1 remains part of the system device for compatibility. HK2 keeps the historic
-`hk_*` entity keys and the `<entry_id>_hk` device identifier, because older
-releases exposed one generic external heating circuit. HK3 uses separate
-`hk3_*` entity keys and the `<entry_id>_hk3` device identifier.
+HK1 now appears as its own logical Home Assistant device using the stable
+`<entry_id>_hk1` device identifier. Its technical keys and CanApiJson addresses
+remain unchanged (`MI=0x02`, `MX=0x00`). HK2 keeps the historic `hk_*` entity
+keys and the `<entry_id>_hk` device identifier, because older releases exposed
+one generic external heating circuit. HK3 uses separate `hk3_*` entity keys and
+the `<entry_id>_hk3` device identifier.
+
+### Warmwasser
+- Status Warmwasser
+- Warmwasser-Push button
+- WW-Solltemperatur Normal slider: 50 to 60 °C in 1 °C steps
+- WW-Solltemperatur Absenk slider: 8 to 60 °C in 1 °C steps
+- WW-Solltemperatur aktuell
+- Warmwassertemperatur
+- Rücklauftemperatur Zirkulation
+- Pumpe Warmwasser
+
+No documented or clearly confirmed permanent warm-water enable/disable register
+is currently known, so no permanent hot-water switch is created. The
+`sg_warmwasser_push` register remains a separate one-shot push button and is
+not used as an on/off switch.
 
 ## Writable controls
 
@@ -118,15 +138,42 @@ For each detected heating circuit the integration exposes a writable
 - Absenk
 
 Writes are treated as successful only when the device returns a matching
-CanApiJson `CMD_ACK`. Error responses, missing responses, and normal read
-responses are rejected. Write-capable entities should still be used carefully:
-always verify the effect on your own heating system after changing operating
-modes.
+CanApiJson `CMD_ACK`. Error responses, missing responses, normal read responses,
+address mismatches and value mismatches are rejected. Write-capable entities
+should still be used carefully: always verify the effect on your own heating
+system after changing operating modes.
+
+The system operating mode is exposed as a writable **Systembetriebsart** select
+with the confirmed values Standby, Sommer and Automatik.
+
+No documented or clearly confirmed writable warm-water operating-mode register
+is currently known, so no warm-water operating-mode select is created.
 
 ### Solar (SOL) — Modbus 20-27
 - Kollektortemperatur
 - Speichertemperatur unten
 - Solarertrag (Gesamtzähler / heute / Vortag)
+
+Solar is only created when setup-time probing finds a plausible value. If all
+known solar registers are missing or only return sentinel values such as
+`0x8000` or `0xFFFF`, the Solar device and its entities are not created.
+
+## Diagnostics
+
+The repository includes a read-only helper at
+`tools/dump_weishaupt_metadata.py`. Use it to download local web metadata files
+when investigating unconfirmed warm-water on/off, warm-water mode, or
+maintenance registers:
+
+```powershell
+$env:WEISHAUPT_PASSWORD = "Admin123"
+python tools/dump_weishaupt_metadata.py --host 192.168.1.50 --output-dir weishaupt_metadata
+```
+
+The script only performs HTTP GET requests for `/script/einstellung.js`,
+`/script/Form_eth_log.js` and `/sd/systable.csv`. It does not send write
+commands. Maintenance data is not exposed through the currently documented
+registers.
 
 ## Protocol
 

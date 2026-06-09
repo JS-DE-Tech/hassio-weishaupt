@@ -1,22 +1,20 @@
-"""Select platform for Weishaupt WTC integration.
-
-Exposes writable registers with value maps as dropdowns in Home Assistant.
-"""
+"""Number platform for Weishaupt WTC integration."""
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from dataclasses import dataclass
 
-from homeassistant.components.select import SelectEntity
+from homeassistant.components.number import NumberEntity, NumberMode
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .heating_circuits import SELECT_SENSOR_KEYS
+from .heating_circuits import NUMBER_SENSOR_KEYS
 from .sensor import (
     _device_identifier,
     _device_model,
@@ -28,62 +26,74 @@ from .sensors import WeishauptDeviceGroup, WeishauptSensorDefinition
 _LOGGER = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class WeishauptNumberSettings:
+    """Number entity settings for a writable sensor definition."""
+
+    min_value: float
+    max_value: float
+    step: float
+
+
+NUMBER_SETTINGS = {
+    "sg_wwsolltemperatur_normal": WeishauptNumberSettings(50.0, 60.0, 1.0),
+    "sg_wwsolltemperatur_absenk": WeishauptNumberSettings(8.0, 60.0, 1.0),
+}
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up Weishaupt Select entities from a config entry."""
+    """Set up Weishaupt Number entities from a config entry."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
 
-    entities: list[WeishauptSelectEntity] = []
-
-    # Implement writable Betriebart selects for the system and detected circuits.
+    entities: list[WeishauptNumberEntity] = []
     for sensor_def in coordinator.sensor_definitions:
-        if (
-            sensor_def.key in SELECT_SENSOR_KEYS
-            or (
-                sensor_def.mi == 0x02
-                and sensor_def.ox == 0x2533
-                and sensor_def.os == 0x02
-                and sensor_def.vs == 1
-                and sensor_def.value_map
-            )
-        ):
+        if sensor_def.key in NUMBER_SENSOR_KEYS:
             entities.append(
-                WeishauptSelectEntity(
-                    coordinator=coordinator, sensor_def=sensor_def, entry=entry
+                WeishauptNumberEntity(
+                    coordinator=coordinator,
+                    sensor_def=sensor_def,
+                    entry=entry,
+                    settings=NUMBER_SETTINGS[sensor_def.key],
                 )
             )
 
     async_add_entities(entities)
 
 
-class WeishauptSelectEntity(CoordinatorEntity, SelectEntity):
-    """Representation of a writable Weishaupt value-map as a Select."""
+class WeishauptNumberEntity(CoordinatorEntity, NumberEntity):
+    """Representation of a writable Weishaupt numeric register."""
 
     _attr_has_entity_name = True
+    _attr_mode = NumberMode.SLIDER
+    _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
 
     def __init__(
         self,
         coordinator,
         sensor_def: WeishauptSensorDefinition,
         entry: ConfigEntry,
+        settings: WeishauptNumberSettings,
     ) -> None:
+        """Initialize the number entity."""
         super().__init__(coordinator)
         self._sensor_def = sensor_def
         self._entry = entry
+        self._settings = settings
 
-        if sensor_def.key in SELECT_SENSOR_KEYS:
-            self._attr_unique_id = f"{entry.entry_id}_{sensor_def.key}"
-        else:
-            self._attr_unique_id = f"{entry.entry_id}_{sensor_def.key}_select"
+        self._attr_unique_id = f"{entry.entry_id}_{sensor_def.key}_number"
         self._attr_name = sensor_def.name
         self._attr_icon = sensor_def.icon
+        self._attr_native_min_value = settings.min_value
+        self._attr_native_max_value = settings.max_value
+        self._attr_native_step = settings.step
 
     @property
     def device_info(self) -> DeviceInfo:
-        """Return device info so the entity is attached to the correct device."""
+        """Return device info so the entity is attached to warm water."""
         group = self._sensor_def.group
         info = DeviceInfo(
             identifiers={
@@ -100,18 +110,17 @@ class WeishauptSelectEntity(CoordinatorEntity, SelectEntity):
         return info
 
     @property
-    def options(self) -> list[str]:
-        """Return available options for the select (ordered by raw value)."""
-        if not self._sensor_def.value_map:
-            return []
-        return [
-            self._sensor_def.value_map[k]
-            for k in sorted(self._sensor_def.value_map.keys())
-        ]
+    def available(self) -> bool:
+        """Return True if the current value is available."""
+        return (
+            super().available
+            and self.coordinator.data is not None
+            and self._sensor_def.key in self.coordinator.data
+        )
 
     @property
-    def current_option(self) -> str | None:
-        """Return currently selected option string, or None if unknown."""
+    def native_value(self) -> float | None:
+        """Return the current Celsius value."""
         if self.coordinator.data is None:
             return None
 
@@ -119,23 +128,21 @@ class WeishauptSelectEntity(CoordinatorEntity, SelectEntity):
         if not data:
             return None
 
-        raw = data.get("value_int")
-        if raw is None:
+        raw_value = data.get("value_int")
+        if raw_value is None or raw_value in (0x8000, 0xFFFF):
             return None
 
-        return self._sensor_def.value_map.get(raw)
+        return round(raw_value * 0.1, 1)
 
-    async def async_select_option(self, option: Any) -> None:  # type: ignore[override]
-        """Write the chosen option back to the device and refresh data."""
-        # Find raw integer matching the selected option
-        inv_map = {v: k for k, v in (self._sensor_def.value_map or {}).items()}
-        if option not in inv_map:
-            _LOGGER.error(
-                "Invalid option selected for %s: %s", self._sensor_def.key, option
+    async def async_set_native_value(self, value: float) -> None:
+        """Write a Celsius value to the device."""
+        if value < self._settings.min_value or value > self._settings.max_value:
+            raise ValueError(
+                f"{self._sensor_def.key} must be between "
+                f"{self._settings.min_value} and {self._settings.max_value}"
             )
-            return
 
-        raw_value = inv_map[option]
+        raw_value = int(round(value * 10))
 
         try:
             success = await self.coordinator.client.write_parameter(
@@ -146,14 +153,11 @@ class WeishauptSelectEntity(CoordinatorEntity, SelectEntity):
                 vs=self._sensor_def.vs,
                 value_int=raw_value,
             )
-        except Exception as err:  # catch client errors
-            _LOGGER.error(
-                "Failed to write %s=%s: %s", self._sensor_def.key, option, err
-            )
+        except Exception as err:
+            _LOGGER.error("Failed to write %s=%s: %s", self._sensor_def.key, value, err)
             return
 
         if success:
-            # Refresh coordinator data to reflect the new state
             await self.coordinator.async_request_refresh()
         else:
             _LOGGER.debug("Write reported unsuccessful for %s", self._sensor_def.key)
