@@ -1,0 +1,7 @@
+{
+  "name": "Weishaupt WTC LAN",
+  "type": "integration",
+  "homeassistant": "2026.1.0",
+  "render_readme": true,
+  "iot_class": "local_polling"
+}
