@@ -1,6 +1,6 @@
 """Constants for the Weishaupt WTC integration."""
 
-DOMAIN = "weishaupt_wtc"
+DOMAIN = "weishaupt_wtc_lan"
 
 CONF_HOST = "host"
 CONF_USERNAME = "username"
