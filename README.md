@@ -28,7 +28,7 @@ Other installations may work, but register availability depends on the installed
 ## Prerequisites
 
 1. Connect the Weishaupt Systemgerät to the local network using RJ-45.
-2. Enable the JSON interface in the Systemgerät settings.
+2. Enable the JSON interface in the Systemgerät settings. **
 3. Determine the IP address or hostname of the Systemgerät.
 4. Use the configured HTTP Basic Authentication credentials.
 
@@ -46,8 +46,93 @@ Example test URL:
 http://admin:Admin123@wem-sg/ajax/CanApiJson.json
 ```
 
-> [!NOTE]
-> The local JSON interface and the WEM cloud connection may be mutually exclusive on some installations. Disable the cloud connection before enabling and using the local JSON interface if required by your Systemgerät.
+> [!IMPORTANT]
+> To use this integration, the WEM Portal connection must be disabled. The Weishaupt Systemgerät does not allow simultaneous use of the WEM Portal cloud service and the local CanApiJson interface.
+
+### **Enable the JSON Interface
+
+The CanApiJson interface is disabled by default on many installations and must be enabled directly on the Weishaupt Systemgerät.
+
+#### Step 1 — Open the service menu
+
+From the home screen, navigate to the service menu (wrench icon).
+
+<img src="https://raw.githubusercontent.com/JS-DE-Tech/hacs-weishaupt-lan/main/docs/images/enable_json_01.png" width="400">
+
+Select the installer/service level.
+
+<img src="https://raw.githubusercontent.com/JS-DE-Tech/hacs-weishaupt-lan/main/docs/images/enable_json_02.png" width="400">
+
+#### Step 2 — Log in as installer
+
+Enter the installer password.
+
+<img src="https://raw.githubusercontent.com/JS-DE-Tech/hacs-weishaupt-lan/main/docs/images/enable_json_03.png" width="400">
+
+After successful login, the installer menu will be displayed.
+
+<img src="https://raw.githubusercontent.com/JS-DE-Tech/hacs-weishaupt-lan/main/docs/images/enable_json_04.png" width="400">
+
+#### Step 3 — Open commissioning settings
+
+Select **Commissioning**.
+
+<img src="https://raw.githubusercontent.com/JS-DE-Tech/hacs-weishaupt-lan/main/docs/images/enable_json_05.png" width="400">
+
+Navigate to **Network**.
+
+<img src="https://raw.githubusercontent.com/JS-DE-Tech/hacs-weishaupt-lan/main/docs/images/enable_json_06.png" width="400">
+
+#### Step 4 — Enable the JSON interface
+
+Open **JSON Interface**.
+
+<img src="https://raw.githubusercontent.com/JS-DE-Tech/hacs-weishaupt-lan/main/docs/images/enable_json_07.png" width="400">
+
+Set **JSON Interface** to **On**.
+
+<img src="https://raw.githubusercontent.com/JS-DE-Tech/hacs-weishaupt-lan/main/docs/images/enable_json_08.png" width="400">
+
+The JSON interface is now enabled.
+
+#### Step 5 — Disable WEM Portal
+
+Return to the user settings menu.
+
+Open **Settings**.
+
+<img src="https://raw.githubusercontent.com/JS-DE-Tech/hacs-weishaupt-lan/main/docs/images/enable_json_09.png" width="400">
+
+Select **WEM Portal**.
+
+<img src="https://raw.githubusercontent.com/JS-DE-Tech/hacs-weishaupt-lan/main/docs/images/enable_json_10.png" width="400">
+
+Disable the WEM Portal connection.
+
+<img src="https://raw.githubusercontent.com/JS-DE-Tech/hacs-weishaupt-lan/main/docs/images/enable_json_11.png" width="400">
+
+> [!IMPORTANT]
+> The local CanApiJson interface used by this integration only works when the WEM Portal connection is disabled.
+>
+> If WEM Portal is enabled, the Systemgerät reserves the communication channel for the cloud connection and Home Assistant will not be able to communicate with the controller.
+>
+> You must choose either:
+>
+> - **WEM Portal (Cloud Access)**, or
+> - **Home Assistant via CanApiJson (Local Access)**
+>
+> Simultaneous operation is not supported by the Systemgerät firmware.
+
+#### Verify Connectivity
+
+After enabling the JSON interface and disabling WEM Portal, verify that:
+
+- The Systemgerät is connected to the local network.
+- Home Assistant can reach the Systemgerät IP address.
+- TCP port 80 is reachable from the Home Assistant host.
+- The configured IP address in the integration matches the Systemgerät.
+
+Once these requirements are met, the integration can be added to Home Assistant.
 
 ## Installation
 
