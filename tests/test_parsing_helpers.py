@@ -127,6 +127,21 @@ class ParsingHelperTests(unittest.TestCase):
         self.assertEqual(resolved[2], "Detected HK2")
         self.assertEqual(resolved[3], "Heizkreis 3")
 
+    def test_detected_name_config_serialization(self) -> None:
+        """Detected names should persist with string keys and normalize on read."""
+        stored = heating_circuits.serialize_heating_circuit_names(
+            {1: " Plattenwaermetauscher ", 2: "", 3: "Heizkoerper"}
+        )
+
+        self.assertEqual(
+            stored,
+            {"1": "Plattenwaermetauscher", "3": "Heizkoerper"},
+        )
+        self.assertEqual(
+            heating_circuits.heating_circuit_names_from_config(stored),
+            {1: "Plattenwaermetauscher", 3: "Heizkoerper"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

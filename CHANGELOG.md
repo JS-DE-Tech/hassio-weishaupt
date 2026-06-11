@@ -12,6 +12,7 @@
 - Added read-only `WEM Network Diagnostics` device for hostname and IPv4 network data when supported.
 - Added empirically confirmed WTC maintenance diagnostics: remaining time until maintenance and maintenance interval.
 - Added detected heating-circuit display names from `systable.csv` with editable override fields.
+- Added persisted parsed detected-name mapping separate from manual heating-circuit name overrides.
 - Added optional extended experimental WTC catalog infrastructure, capped at 100 explicitly listed entities and disabled by default.
 - Added `weishaupt_wtc_lan.export_experimental_snapshot` service to export JSON and CSV correlation snapshots.
 

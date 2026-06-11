@@ -20,6 +20,7 @@ from homeassistant.helpers import entity_registry as er
 
 from .api import ProbeStatus, WeishauptApiClient
 from .const import (
+    CONF_DETECTED_HEATING_CIRCUIT_NAMES,
     CONF_ENABLE_EXTENDED_EXPERIMENTAL_WTC_SENSORS,
     CONF_ENABLE_EXPERIMENTAL_WTC_SENSORS,
     CONF_HK1_NAME,
@@ -45,6 +46,7 @@ from .heating_circuits import (
     DEVICE_GROUP_WW,
     build_sensor_definitions,
     device_groups_from_systable_csv,
+    heating_circuit_names_from_config,
     heating_circuit_names_from_systable_csv,
     is_plausible_presence_value,
     probe_sensor_definitions_for_group,
@@ -530,8 +532,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if systable_csv is not None
         else None
     )
-    detected_heating_circuit_names = heating_circuit_names_from_systable_csv(
-        systable_csv
+    persisted_heating_circuit_names = heating_circuit_names_from_config(
+        entry.data.get(CONF_DETECTED_HEATING_CIRCUIT_NAMES, {})
+    )
+    detected_heating_circuit_names = (
+        heating_circuit_names_from_systable_csv(systable_csv)
+        if systable_csv is not None
+        else persisted_heating_circuit_names
     )
     heating_circuit_names = resolve_heating_circuit_names(
         explicit_heating_circuit_names,

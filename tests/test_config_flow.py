@@ -70,6 +70,23 @@ class ConfigFlow:
     def __init_subclass__(cls, **kwargs) -> None:
         super().__init_subclass__()
 
+    def async_create_entry(self, title: str, data: dict) -> dict:
+        return {"type": "create_entry", "title": title, "data": data}
+
+    def async_show_form(self, step_id: str, data_schema, errors=None) -> dict:
+        return {
+            "type": "form",
+            "step_id": step_id,
+            "data_schema": data_schema,
+            "errors": errors or {},
+        }
+
+    async def async_set_unique_id(self, unique_id: str) -> None:
+        self.unique_id = unique_id
+
+    def _abort_if_unique_id_configured(self) -> None:
+        return None
+
 
 class OptionsFlowWithReload:
     """Minimal options flow stub."""
@@ -156,7 +173,13 @@ sys.modules.setdefault("custom_components.weishaupt_wtc_lan", integration_pkg)
 
 load_module("custom_components.weishaupt_wtc_lan.const", PACKAGE_ROOT / "const.py")
 api_stub = types.ModuleType("custom_components.weishaupt_wtc_lan.api")
-api_stub.WeishauptApiClient = object
+
+
+class ApiClientStub:
+    """Placeholder API client stub."""
+
+
+api_stub.WeishauptApiClient = ApiClientStub
 api_stub.WeishauptAuthError = Exception
 api_stub.WeishauptConnectionError = Exception
 sys.modules["custom_components.weishaupt_wtc_lan.api"] = api_stub
@@ -220,6 +243,109 @@ class ConfigFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result["data"]["enable_experimental_wtc_sensors"])
         self.assertTrue(result["data"]["enable_extended_experimental_wtc_sensors"])
         self.assertFalse(result["data"]["use_detected_heating_circuit_names"])
+
+    async def test_initial_names_step_persists_detected_names_separately(self) -> None:
+        """Initial setup should store parsed detected names apart from overrides."""
+        flow = config_flow.WeishauptWemConfigFlow()
+        flow._pending_user_input = {
+            "host": "wem-sg",
+            "username": "admin",
+            "password": "Admin123",
+            "scan_interval": 30,
+        }
+        flow._detected_heating_circuit_names = {
+            1: "Plattenwaermetauscher",
+            2: "Fussbodenheizung",
+        }
+
+        result = await flow.async_step_names(
+            {
+                "use_detected_heating_circuit_names": True,
+                "hk1_name": "",
+                "hk2_name": "Manual HK2",
+                "hk3_name": "",
+            }
+        )
+
+        self.assertEqual(
+            result["data"]["detected_heating_circuit_names"],
+            {"1": "Plattenwaermetauscher", "2": "Fussbodenheizung"},
+        )
+        self.assertEqual(result["data"]["hk2_name"], "Manual HK2")
+
+    async def test_options_refresh_success_updates_persisted_detected_names(self) -> None:
+        """Opening options should refresh and persist detected names on success."""
+        updated: list[dict] = []
+
+        class Client:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+            async def fetch_systable_csv(self) -> str:
+                return "1;HK1;Plattenwaermetauscher\n2;HK2;Fussbodenheizung\n"
+
+        config_flow.WeishauptApiClient = Client
+        flow = config_flow.WeishauptWemOptionsFlow(
+            ConfigEntry(
+                data={
+                    "host": "wem-sg",
+                    "username": "admin",
+                    "password": "Admin123",
+                    "detected_heating_circuit_names": {"1": "Alt HK1"},
+                },
+                options={},
+            )
+        )
+        flow.hass = SimpleNamespace(
+            config_entries=SimpleNamespace(
+                async_update_entry=lambda entry, data: updated.append(data)
+            )
+        )
+
+        await flow.async_step_init()
+
+        self.assertEqual(
+            updated[0]["detected_heating_circuit_names"],
+            {"1": "Plattenwaermetauscher", "2": "Fussbodenheizung"},
+        )
+        self.assertEqual(
+            flow._detected_heating_circuit_names,
+            {1: "Plattenwaermetauscher", 2: "Fussbodenheizung"},
+        )
+
+    async def test_options_refresh_failure_reuses_last_detected_names(self) -> None:
+        """Opening options should keep persisted names when refresh fails."""
+        updated: list[dict] = []
+
+        class Client:
+            def __init__(self, *args, **kwargs) -> None:
+                pass
+
+            async def fetch_systable_csv(self):
+                return None
+
+        config_flow.WeishauptApiClient = Client
+        flow = config_flow.WeishauptWemOptionsFlow(
+            ConfigEntry(
+                data={
+                    "host": "wem-sg",
+                    "username": "admin",
+                    "password": "Admin123",
+                    "detected_heating_circuit_names": {"1": "Persisted HK1"},
+                },
+                options={},
+            )
+        )
+        flow.hass = SimpleNamespace(
+            config_entries=SimpleNamespace(
+                async_update_entry=lambda entry, data: updated.append(data)
+            )
+        )
+
+        await flow.async_step_init()
+
+        self.assertEqual(updated, [])
+        self.assertEqual(flow._detected_heating_circuit_names, {1: "Persisted HK1"})
 
 
 if __name__ == "__main__":

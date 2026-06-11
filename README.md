@@ -255,6 +255,12 @@ explicit non-empty user override
 -> generic fallback
 ```
 
+Detected heating-circuit names are stored separately from manual overrides as a
+small parsed mapping, for example `{ "1": "Plattenwaermetauscher" }`. The raw
+`systable.csv` file is not stored. Opening the integration options refreshes the
+mapping when the file can be fetched; if the refresh fails, the last successful
+detected names remain available.
+
 Observed example from a real installation:
 
 | Logical device | Display name from the installation |

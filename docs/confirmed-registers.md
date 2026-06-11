@@ -131,6 +131,13 @@ Observed display names from `/sd/systable.csv` on tested hardware:
 | HK2 | `Fussbodenheizung` |
 | HK3 | `Heizkoerper` |
 
+The integration stores only the parsed detected-name mapping, not the complete
+raw `systable.csv` file. Manual overrides are stored separately. Name resolution
+uses non-empty manual override first, then the last successfully detected
+mapping, then the generic `Heizkreis 1` / `Heizkreis 2` / `Heizkreis 3`
+fallbacks. Display-name changes do not change entity unique IDs, device
+identifiers, or register addresses.
+
 | Key suffix | Description | OX | OS | VS | Scaling / Mapping | Status |
 |---|---|---:|---:|---:|---|---|
 | `betriebsart_vorgabe` | Operating-mode target | `0x2533` | `0x02` | `1` | enum | Confirmed |

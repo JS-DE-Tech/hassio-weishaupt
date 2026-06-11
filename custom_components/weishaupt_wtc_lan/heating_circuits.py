@@ -277,6 +277,35 @@ def heating_circuit_names_from_systable_csv(csv_text: str | None) -> dict[int, s
     return names
 
 
+def serialize_heating_circuit_names(names: dict[int, str] | None) -> dict[str, str]:
+    """Serialize heating-circuit names for config-entry storage."""
+    if not names:
+        return {}
+    return {
+        str(circuit): name.strip()
+        for circuit, name in names.items()
+        if circuit in (1, 2, 3) and name and name.strip()
+    }
+
+
+def heating_circuit_names_from_config(value: object) -> dict[int, str]:
+    """Normalize persisted heating-circuit names from config-entry data."""
+    if not isinstance(value, dict):
+        return {}
+    names: dict[int, str] = {}
+    for raw_circuit, raw_name in value.items():
+        try:
+            circuit = int(raw_circuit)
+        except (TypeError, ValueError):
+            continue
+        if circuit not in (1, 2, 3) or raw_name is None:
+            continue
+        name = str(raw_name).strip()
+        if name:
+            names[circuit] = name
+    return names
+
+
 def resolve_heating_circuit_names(
     overrides: dict[int, str | None] | None,
     detected_names: dict[int, str] | None,

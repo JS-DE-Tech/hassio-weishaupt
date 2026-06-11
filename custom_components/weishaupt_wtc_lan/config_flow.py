@@ -18,6 +18,7 @@ from .api import (
     WeishauptConnectionError,
 )
 from .const import (
+    CONF_DETECTED_HEATING_CIRCUIT_NAMES,
     CONF_ENABLE_EXTENDED_EXPERIMENTAL_WTC_SENSORS,
     CONF_ENABLE_EXPERIMENTAL_WTC_SENSORS,
     DEFAULT_PASSWORD,
@@ -37,7 +38,11 @@ from .const import (
     MIN_SCAN_INTERVAL,
     SCAN_INTERVAL_STEP,
 )
-from .heating_circuits import heating_circuit_names_from_systable_csv
+from .heating_circuits import (
+    heating_circuit_names_from_config,
+    heating_circuit_names_from_systable_csv,
+    serialize_heating_circuit_names,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -202,14 +207,45 @@ def _normalize_user_input(user_input: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def _name_defaults_from_detected(detected_names: dict[int, str]) -> dict[str, Any]:
-    """Return form defaults for heating-circuit names."""
+def _manual_name_overrides_from_defaults(defaults: dict[str, Any]) -> dict[str, str]:
+    """Return configured manual heating-circuit name overrides."""
     return {
-        CONF_USE_DETECTED_HEATING_CIRCUIT_NAMES: DEFAULT_USE_DETECTED_HEATING_CIRCUIT_NAMES,
-        CONF_HK1_NAME: detected_names.get(1, DEFAULT_HEATING_CIRCUIT_NAMES[1]),
-        CONF_HK2_NAME: detected_names.get(2, DEFAULT_HEATING_CIRCUIT_NAMES[2]),
-        CONF_HK3_NAME: detected_names.get(3, DEFAULT_HEATING_CIRCUIT_NAMES[3]),
+        CONF_HK1_NAME: str(defaults.get(CONF_HK1_NAME, "") or "").strip(),
+        CONF_HK2_NAME: str(defaults.get(CONF_HK2_NAME, "") or "").strip(),
+        CONF_HK3_NAME: str(defaults.get(CONF_HK3_NAME, "") or "").strip(),
     }
+
+
+def _name_defaults_from_detected(
+    detected_names: dict[int, str],
+    manual_overrides: dict[str, str] | None = None,
+    use_detected_names: bool = DEFAULT_USE_DETECTED_HEATING_CIRCUIT_NAMES,
+) -> dict[str, Any]:
+    """Return form defaults for heating-circuit names."""
+    manual_overrides = manual_overrides or {}
+    return {
+        CONF_USE_DETECTED_HEATING_CIRCUIT_NAMES: use_detected_names,
+        CONF_HK1_NAME: manual_overrides.get(CONF_HK1_NAME)
+        or detected_names.get(1, DEFAULT_HEATING_CIRCUIT_NAMES[1]),
+        CONF_HK2_NAME: manual_overrides.get(CONF_HK2_NAME)
+        or detected_names.get(2, DEFAULT_HEATING_CIRCUIT_NAMES[2]),
+        CONF_HK3_NAME: manual_overrides.get(CONF_HK3_NAME)
+        or detected_names.get(3, DEFAULT_HEATING_CIRCUIT_NAMES[3]),
+    }
+
+
+async def _async_fetch_detected_heating_circuit_names(
+    client: WeishauptApiClient,
+) -> dict[int, str] | None:
+    """Fetch systable.csv and parse detected heating-circuit names."""
+    try:
+        systable_csv = await client.fetch_systable_csv()
+    except Exception:
+        _LOGGER.debug("Could not fetch systable.csv for detected names", exc_info=True)
+        return None
+    if systable_csv is None:
+        return None
+    return heating_circuit_names_from_systable_csv(systable_csv)
 
 
 class WeishauptWemConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -264,15 +300,11 @@ class WeishauptWemConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "unknown"
 
             if not errors:
-                systable_csv = None
-                try:
-                    systable_csv = await client.fetch_systable_csv()
-                except Exception:
-                    _LOGGER.debug("Could not fetch systable.csv during setup", exc_info=True)
+                detected_names = (
+                    await _async_fetch_detected_heating_circuit_names(client)
+                ) or {}
                 self._pending_user_input = user_input
-                self._detected_heating_circuit_names = (
-                    heating_circuit_names_from_systable_csv(systable_csv)
-                )
+                self._detected_heating_circuit_names = detected_names
                 return self.async_show_form(
                     step_id="names",
                     data_schema=_names_schema(
@@ -303,6 +335,11 @@ class WeishauptWemConfigFlow(ConfigFlow, domain=DOMAIN):
             )
         base_input = self._pending_user_input or {}
         normalized = _normalize_user_input({**base_input, **user_input})
+        normalized[CONF_DETECTED_HEATING_CIRCUIT_NAMES] = (
+            serialize_heating_circuit_names(
+                getattr(self, "_detected_heating_circuit_names", {})
+            )
+        )
         host = normalized[CONF_HOST]
         return self.async_create_entry(
             title=f"Weishaupt WTC ({host})",
@@ -316,6 +353,9 @@ class WeishauptWemOptionsFlow(OptionsFlowWithReload):
     def __init__(self, config_entry: ConfigEntry) -> None:
         """Initialize the options flow."""
         self._config_entry = config_entry
+        self._detected_heating_circuit_names = heating_circuit_names_from_config(
+            config_entry.data.get(CONF_DETECTED_HEATING_CIRCUIT_NAMES, {})
+        )
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -331,7 +371,47 @@ class WeishauptWemOptionsFlow(OptionsFlowWithReload):
             **self._config_entry.data,
             **self._config_entry.options,
         }
+        detected_names = self._detected_heating_circuit_names
+        host = self._config_entry.data.get(CONF_HOST)
+        username = self._config_entry.data.get(CONF_USERNAME)
+        password = self._config_entry.data.get(CONF_PASSWORD)
+        if host and username and password:
+            session = async_get_clientsession(self.hass)
+            client = WeishauptApiClient(
+                host=host,
+                username=username,
+                password=password,
+                session=session,
+            )
+            refreshed_names = await _async_fetch_detected_heating_circuit_names(client)
+            if refreshed_names is not None:
+                detected_names = refreshed_names
+                self._detected_heating_circuit_names = detected_names
+                updated_data = {
+                    **self._config_entry.data,
+                    CONF_DETECTED_HEATING_CIRCUIT_NAMES: serialize_heating_circuit_names(
+                        detected_names
+                    ),
+                }
+                self.hass.config_entries.async_update_entry(
+                    self._config_entry,
+                    data=updated_data,
+                )
+                defaults[CONF_DETECTED_HEATING_CIRCUIT_NAMES] = updated_data[
+                    CONF_DETECTED_HEATING_CIRCUIT_NAMES
+                ]
+        manual_overrides = _manual_name_overrides_from_defaults(defaults)
+        name_defaults = _name_defaults_from_detected(
+            detected_names,
+            manual_overrides,
+            bool(
+                defaults.get(
+                    CONF_USE_DETECTED_HEATING_CIRCUIT_NAMES,
+                    DEFAULT_USE_DETECTED_HEATING_CIRCUIT_NAMES,
+                )
+            ),
+        )
         return self.async_show_form(
             step_id="init",
-            data_schema=_options_schema(defaults),
+            data_schema=_options_schema({**defaults, **name_defaults}),
         )
