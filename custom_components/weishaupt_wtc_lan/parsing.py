@@ -121,3 +121,12 @@ def decode_ipv4(raw_value: int, value_hex: str = "") -> str | None:
             raw_value & 0xFF,
         ]
     return ".".join(str(octet) for octet in octets)
+
+
+def format_mac_address(components: list[int]) -> str | None:
+    """Format six MAC address byte components as XX-XX-XX-XX-XX-XX."""
+    if len(components) != 6:
+        return None
+    if any(not 0 <= component <= 0xFF for component in components):
+        return None
+    return "-".join(f"{component:02X}" for component in components)

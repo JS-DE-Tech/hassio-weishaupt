@@ -51,13 +51,16 @@ from .heating_circuits import (
     heating_circuit_names_from_systable_csv,
     is_writable_operating_mode_definition,
     is_plausible_presence_value,
+    logical_device_names_from_systable_csv,
     probe_sensor_definitions_for_group,
     resolve_heating_circuit_names,
 )
+from .parsing import format_mac_address
 from .sensors import (
     EXPERIMENTAL_WTC_REGISTERS,
     EXTENDED_EXPERIMENTAL_WTC_MAX_ENTITIES,
     EXTENDED_EXPERIMENTAL_WTC_REGISTERS,
+    NETWORK_MAC_COMPONENT_SENSORS,
     NETWORK_SENSORS,
     ExperimentalWtcRegister,
     WeishauptSensorDefinition,
@@ -74,10 +77,18 @@ PLATFORMS: list[Platform] = [
 
 WTC_POWER_KEY = "wtc_waermeleistung_vpt"
 NETWORK_HOSTNAME_KEY = "network_hostname"
+NETWORK_CERTIFICATE_CN_KEY = "network_certificate_cn"
+NETWORK_MAC_ADDRESS_KEY = "network_mac_address"
+NETWORK_OPTIONAL_STRING_KEYS = {
+    NETWORK_HOSTNAME_KEY,
+    NETWORK_CERTIFICATE_CN_KEY,
+}
 DEFAULT_ENABLED_SENSOR_KEYS = {
     "sg_device_date",
     "sg_device_clock_time",
     "network_hostname",
+    "network_certificate_cn",
+    "network_mac_address",
     "network_ip_mode",
     "network_ip_address",
     "network_subnet_mask",
@@ -231,7 +242,7 @@ async def _async_probe_network_sensors(
     numeric_definitions = [
         sensor_def
         for sensor_def in NETWORK_SENSORS
-        if sensor_def.key != NETWORK_HOSTNAME_KEY
+        if sensor_def.key not in (NETWORK_OPTIONAL_STRING_KEYS | {NETWORK_MAC_ADDRESS_KEY})
     ]
     params = [
         {
@@ -251,24 +262,61 @@ async def _async_probe_network_sensors(
         for sensor_def in supported
     }
 
-    hostname_def = next(
-        (sensor_def for sensor_def in NETWORK_SENSORS if sensor_def.key == NETWORK_HOSTNAME_KEY),
-        None,
-    )
-    if hostname_def is not None:
+    optional_string_definitions = [
+        sensor_def
+        for sensor_def in NETWORK_SENSORS
+        if sensor_def.key in NETWORK_OPTIONAL_STRING_KEYS
+    ]
+    for string_def in optional_string_definitions:
         try:
-            hostname_data = await client.read_string_parameter(
-                mi=hostname_def.mi,
-                mx=hostname_def.mx,
-                ox=hostname_def.ox,
-                os_val=hostname_def.os,
-                vs=hostname_def.vs,
+            string_data = await client.read_string_parameter(
+                mi=string_def.mi,
+                mx=string_def.mx,
+                ox=string_def.ox,
+                os_val=string_def.os,
+                vs=string_def.vs,
             )
         except AttributeError:
-            hostname_data = None
-        if hostname_data and str(hostname_data.get("value_string") or "").strip():
-            supported.append(hostname_def)
-            static_data[NETWORK_HOSTNAME_KEY] = hostname_data
+            string_data = None
+        if string_data and str(string_data.get("value_string") or "").strip():
+            supported.append(string_def)
+            static_data[string_def.key] = string_data
+
+    mac_params = [
+        {
+            "key": sensor_def.key,
+            "mi": sensor_def.mi,
+            "mx": sensor_def.mx,
+            "ox": sensor_def.ox,
+            "os": sensor_def.os,
+            "vs": sensor_def.vs,
+        }
+        for sensor_def in NETWORK_MAC_COMPONENT_SENSORS
+    ]
+    mac_results = await client.read_parameters(mac_params)
+    mac_components: list[int] = []
+    for sensor_def in NETWORK_MAC_COMPONENT_SENSORS:
+        data = mac_results.get(sensor_def.key)
+        if data is None or data.get("value_int") is None:
+            mac_components = []
+            break
+        mac_components.append(data["value_int"] & 0xFF)
+    mac_address = format_mac_address(mac_components)
+    mac_def = next(
+        (
+            sensor_def
+            for sensor_def in NETWORK_SENSORS
+            if sensor_def.key == NETWORK_MAC_ADDRESS_KEY
+        ),
+        None,
+    )
+    if mac_address is not None and mac_def is not None:
+        supported.append(mac_def)
+        static_data[NETWORK_MAC_ADDRESS_KEY] = {
+            "value_int": 0,
+            "value_hex": "".join(f"{component:02x}" for component in mac_components),
+            "value_string": mac_address,
+        }
 
     _LOGGER.debug(
         "Detected supported static network diagnostics: keys=%s",
@@ -437,6 +485,7 @@ async def _async_export_local_metadata(
 
     systable_csv = await coordinator.client.fetch_systable_csv()
     parsed_names = heating_circuit_names_from_systable_csv(systable_csv)
+    logical_device_names = logical_device_names_from_systable_csv(systable_csv)
     persisted_names = heating_circuit_names_from_config(
         entry.data.get(CONF_DETECTED_HEATING_CIRCUIT_NAMES, {})
     )
@@ -490,6 +539,7 @@ async def _async_export_local_metadata(
         "resolved_heating_circuit_names": {
             str(key): value for key, value in resolved_names.items()
         },
+        "logical_device_names": logical_device_names,
     }
     with open(summary_path, "w", encoding="utf-8") as summary_file:
         json.dump(summary, summary_file, indent=2, sort_keys=True, ensure_ascii=False)
@@ -738,6 +788,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if systable_csv is not None
         else None
     )
+    logical_device_names = logical_device_names_from_systable_csv(systable_csv)
     persisted_heating_circuit_names = heating_circuit_names_from_config(
         entry.data.get(CONF_DETECTED_HEATING_CIRCUIT_NAMES, {})
     )
@@ -842,6 +893,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         sensor_definitions=sensor_definitions,
         active_heating_circuits=active_heating_circuits,
         heating_circuit_names=heating_circuit_names,
+        logical_device_names=logical_device_names,
         active_device_groups=active_device_groups,
         experimental_wtc_registers=experimental_wtc_registers,
         extended_experimental_wtc_registers=extended_experimental_wtc_registers,

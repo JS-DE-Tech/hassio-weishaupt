@@ -138,11 +138,26 @@ mapping, then the generic `Heizkreis 1` / `Heizkreis 2` / `Heizkreis 3`
 fallbacks. Display-name changes do not change entity unique IDs, device
 identifiers, or register addresses.
 
-The current parser supports explicit HK markers and header/address metadata
-where `MI=0x02` and `MX=0x00`, `0x01`, or `0x02`. The repository does not yet
-contain a real exported `systable.csv` fixture with heating-circuit display
-names, so one exported metadata file is still required for final parser
-adaptation if the tested firmware uses a different structure.
+The parser supports explicit HK markers, header/address metadata where
+`MI=0x02` and `MX=0x00`, `0x01`, or `0x02`, and the real local metadata format
+confirmed on the tested installation:
+
+```text
+M02_*.BIN;<display name>;<circuit number>
+```
+
+Only `M02_*.BIN` rows are interpreted as heating-circuit display names, and the
+final column must be circuit number `1`, `2`, or `3`. This prevents the domestic
+hot-water row `M03_*.BIN;Warmwasserspeicher;1` from being misclassified as HK1.
+
+The real metadata also provides optional logical device display names:
+
+| Module file | Logical device |
+|---|---|
+| `M01_*.BIN` | Systemgeraet |
+| `M03_*.BIN` | Warmwasser |
+| `M06_*.BIN` | Netzwerk |
+| `M07_*.BIN` | WTC Kessel |
 
 The historic HK2 technical key prefix `hk_` is intentionally retained for
 backward compatibility with existing unique IDs, dashboards, and automations.
@@ -352,19 +367,37 @@ These values were confirmed through the local web-interface JavaScript and read-
 
 | Description | MI | MX | OX | OS | VS | Scaling / Mapping |
 |---|---:|---:|---:|---:|---:|---|
-| IP mode | `0x06` | `0x00` | `0x2507` | `0x00` | `1` | enum |
+| IP mode | `0x06` | `0x00` | `0x2507` | `0x00` | `1` | `1` = Manuell, `3` = Automatisch (DHCP) |
 | IP address | `0x06` | `0x00` | `0x2508` | `0x00` | `4` | IPv4 |
 | Subnet mask | `0x06` | `0x00` | `0x2509` | `0x00` | `4` | IPv4 |
 | Gateway | `0x06` | `0x00` | `0x250A` | `0x00` | `4` | IPv4 |
 | DNS server | `0x06` | `0x00` | `0x250B` | `0x00` | `4` | IPv4 |
+| MAC component 1 | `0x06` | `0x00` | `0x250C` | `0x01` | `2` | derived MAC byte |
+| MAC component 2 | `0x06` | `0x00` | `0x250C` | `0x02` | `2` | derived MAC byte |
+| MAC component 3 | `0x06` | `0x00` | `0x250C` | `0x03` | `2` | derived MAC byte |
+| MAC component 4 | `0x06` | `0x00` | `0x250C` | `0x04` | `2` | derived MAC byte |
+| MAC component 5 | `0x06` | `0x00` | `0x250C` | `0x05` | `2` | derived MAC byte |
+| MAC component 6 | `0x06` | `0x00` | `0x250C` | `0x06` | `2` | derived MAC byte |
+| Gerätename / NBNS | `0x06` | `0x00` | `0x250E` | `0x00` | `16` | string GETS |
+| Zertifikat-CN | `0x06` | `0x00` | `0x2511` | `0x00` | `50` | string GETS |
 
-Hostname is probed with the protocol string-read command at
-`06/00/2505/00`. It is exposed only when the device returns a supported string
-response.
+The configured network device name is probed with the protocol string-read
+command at `06/00/250E/00 VS=16 GETS` and exposed as `Gerätename` only when the
+device returns a non-empty supported string response. `06/00/2505/00` is a web
+UI write address and is not used.
+
+`Zertifikat-CN` is probed with `06/00/2511/00 VS=50 GETS` and is also skipped
+safely when unsupported or empty.
+
+The six MAC components are probed only during setup or reload. The integration
+exposes one derived `MAC-Adresse` diagnostic in `XX-XX-XX-XX-XX-XX` format and
+does not create visible component entities. If any component is missing, the
+derived MAC entity is skipped safely.
 
 Network diagnostics are static setup-time values. They are read on setup or
-reload and are not included in recurring coordinator refresh batches. IP mode
-raw value `3` is empirically confirmed as `DHCP` on the tested firmware.
+reload and are not included in recurring coordinator refresh batches. No network
+write support, password-related registers, usernames, cookies, Authorization
+headers, or tokens are exposed.
 
 ## Derived Device Date and Time
 

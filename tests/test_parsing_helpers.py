@@ -98,6 +98,15 @@ class ParsingHelperTests(unittest.TestCase):
         self.assertEqual(parsing.decode_ipv4(0x08080808), "8.8.8.8")
         self.assertIsNone(parsing.decode_ipv4(-1))
 
+    def test_format_mac_address(self) -> None:
+        """MAC helpers should format six byte components."""
+        self.assertEqual(
+            parsing.format_mac_address([0, 0x11, 0x22, 0xAA, 0xBB, 0xCC]),
+            "00-11-22-AA-BB-CC",
+        )
+        self.assertIsNone(parsing.format_mac_address([0, 1, 2]))
+        self.assertIsNone(parsing.format_mac_address([0, 1, 2, 3, 4, 0x100]))
+
     def test_heating_circuit_names_from_systable_csv(self) -> None:
         """Detected heating-circuit names should come from CSV-like rows."""
         csv_text = (
@@ -113,6 +122,34 @@ class ParsingHelperTests(unittest.TestCase):
                 2: "Fussbodenheizung",
                 3: "Heizkoerper",
             },
+        )
+
+    def test_real_systable_fixture_parsing(self) -> None:
+        """Real systable rows should distinguish HK and logical device names."""
+        csv_text = (REPO_ROOT / "tests" / "fixtures" / "real_systable.csv").read_text(
+            encoding="utf-8-sig"
+        )
+
+        self.assertEqual(
+            heating_circuits.heating_circuit_names_from_systable_csv(csv_text),
+            {
+                1: "Plattenwaermetauscher",
+                2: "Fussbodenheizung",
+                3: "Heizkoerper",
+            },
+        )
+        self.assertEqual(
+            heating_circuits.logical_device_names_from_systable_csv(csv_text),
+            {
+                "system": "HeizungSAB7",
+                "ww": "Warmwasserspeicher",
+                "network": "GATEWAY0",
+                "wtc": "WE0",
+            },
+        )
+        self.assertNotIn(
+            "Warmwasserspeicher",
+            heating_circuits.heating_circuit_names_from_systable_csv(csv_text).values(),
         )
 
     def test_heating_circuit_name_resolution_order(self) -> None:

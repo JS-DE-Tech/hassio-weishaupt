@@ -261,11 +261,19 @@ small parsed mapping, for example `{ "1": "Plattenwaermetauscher" }`. The raw
 mapping when the file can be fetched; if the refresh fails, the last successful
 detected names remain available.
 
-The current parser supports explicit HK markers and confirmed metadata fields
-that expose `MI=0x02` with `MX=0x00`, `0x01`, or `0x02`. The repository does
-not currently contain a real exported `systable.csv` fixture with heating-circuit
-display names, so final parser adaptation may still require one exported
-metadata file from the validated installation.
+The parser supports explicit HK markers, confirmed metadata fields that expose
+`MI=0x02` with `MX=0x00`, `0x01`, or `0x02`, and the real local metadata format
+confirmed on the validated installation:
+
+```text
+M02_*.BIN;<display name>;<circuit number>
+```
+
+Only `M02_*.BIN` rows are interpreted as heating-circuit display names, so a
+warm-water row such as `M03_*.BIN;Warmwasserspeicher;1` is not treated as HK1.
+The same inventory can also provide optional logical display names for the
+Systemgeraet, Warmwasser, network device, and WTC boiler while keeping stable
+device identifiers and entity unique IDs unchanged.
 
 Observed example from a real installation:
 
@@ -275,6 +283,7 @@ Observed example from a real installation:
 | HK2 | `Fussbodenheizung` |
 | HK3 | `Heizkoerper` |
 | Domestic hot water | `Warmwasserspeicher` |
+| Network | `GATEWAY0` |
 | Boiler | `WE0` |
 
 External heating circuits are only created when the corresponding CanApiJson module returns plausible responses.
@@ -418,23 +427,31 @@ device. The stable device identifier remains `<entry_id>_network`.
 
 Entities include:
 
-- hostname, when the optional string read is supported
+- Gerätename, from the optional read-only `06/00/250E/00 VS=16 GETS` string
+  read when supported
+- Zertifikat-CN, from the optional read-only `06/00/2511/00 VS=50 GETS` string
+  read when supported
+- MAC-Adresse, derived from six read-only `06/00/250C/01..06 VS=2` components
 - IP mode
 - IP address
 - subnet mask
 - gateway
 - DNS server
 
-Numeric network values are read once during integration setup or reload and are
-kept as static coordinator data. They are not included in recurring refresh
-batches. Numeric network entities are diagnostic and enabled by default in the
-entity registry. IP mode raw value `3` is empirically confirmed as `DHCP` on the
-tested Systemgeraet firmware.
+Network values are read once during integration setup or reload and are kept as
+static coordinator data. They are not included in recurring refresh batches.
+Network diagnostic entities are enabled by default in the entity registry. IP
+mode raw value `1` is confirmed as `Manuell`; raw value `3` is confirmed as
+`Automatisch (DHCP)`.
 
-Hostname uses an optional string-read probe. It is created only when the string
-read returns a non-empty value, and hostname read failure never fails setup.
+The configured device name and certificate CN use optional string-read probes.
+They are created only when the string read returns a non-empty value, and string
+read failure never fails setup. `06/00/2505/00` is a web UI write address and is
+not used by the integration. The MAC address is exposed only when all six
+components are available; the six component registers are not visible entities.
 
-No credentials, passwords, or HTTP authorization data are exposed.
+No network write support is implemented. Credentials, passwords, usernames,
+cookies, tokens, and HTTP authorization data are not exposed.
 
 ### Solar
 

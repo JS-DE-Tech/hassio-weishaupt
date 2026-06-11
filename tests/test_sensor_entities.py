@@ -357,12 +357,22 @@ class SensorEntityTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(sensor_by_key(key).entity_registry_enabled_default)
 
     def test_network_values_render_on_network_device(self) -> None:
-        """Network diagnostics should decode IPv4 values and use their own device."""
+        """Network diagnostics should decode static values and use their own device."""
         ip_def = next(
             item for item in sensors.NETWORK_SENSORS if item.key == "network_ip_address"
         )
         host_def = next(
             item for item in sensors.NETWORK_SENSORS if item.key == "network_hostname"
+        )
+        cert_def = next(
+            item
+            for item in sensors.NETWORK_SENSORS
+            if item.key == "network_certificate_cn"
+        )
+        mac_def = next(
+            item
+            for item in sensors.NETWORK_SENSORS
+            if item.key == "network_mac_address"
         )
         coordinator = SimpleNamespace(
             data={
@@ -375,7 +385,18 @@ class SensorEntityTests(unittest.IsolatedAsyncioTestCase):
                     "value_hex": "57454d2d534700",
                     "value_string": "WEM-SG",
                 },
+                "network_certificate_cn": {
+                    "value_int": 0,
+                    "value_hex": "77656d2e6578616d706c65",
+                    "value_string": "wem.example",
+                },
+                "network_mac_address": {
+                    "value_int": 0,
+                    "value_hex": "001122aabbcc",
+                    "value_string": "00-11-22-AA-BB-CC",
+                },
             },
+            logical_device_names={"network": "GATEWAY0"},
         )
         entry = SimpleNamespace(entry_id="entry-123")
 
@@ -389,31 +410,52 @@ class SensorEntityTests(unittest.IsolatedAsyncioTestCase):
             sensor_def=host_def,
             entry=entry,
         )
+        cert_entity = sensor.WeishauptSensorEntity(
+            coordinator=coordinator,
+            sensor_def=cert_def,
+            entry=entry,
+        )
+        mac_entity = sensor.WeishauptSensorEntity(
+            coordinator=coordinator,
+            sensor_def=mac_def,
+            entry=entry,
+        )
 
         self.assertEqual(ip_entity.native_value, "192.168.1.42")
         self.assertEqual(host_entity.native_value, "WEM-SG")
+        self.assertEqual(cert_entity.native_value, "wem.example")
+        self.assertEqual(mac_entity.native_value, "00-11-22-AA-BB-CC")
         self.assertEqual(
             ip_entity.device_info["identifiers"],
             {("weishaupt_wtc_lan", "entry-123_network")},
         )
-        self.assertEqual(ip_entity.device_info["name"], "Weishaupt Systemgerät Netzwerk")
+        self.assertEqual(ip_entity.device_info["name"], "GATEWAY0")
 
-    def test_network_numeric_entities_enabled_and_ip_mode_raw_3_is_dhcp(self) -> None:
-        """Network numeric diagnostics should be enabled and map raw 3 to DHCP."""
+    def test_network_entities_enabled_and_ip_mode_mapping(self) -> None:
+        """Network diagnostics should be enabled and use confirmed IP mode labels."""
         mode_def = next(
             item for item in sensors.NETWORK_SENSORS if item.key == "network_ip_mode"
         )
         self.assertFalse(any(item.poll for item in sensors.NETWORK_SENSORS))
-        self.assertTrue(mode_def.entity_registry_enabled_default)
-        entity = sensor.WeishauptSensorEntity(
+        for sensor_def in sensors.NETWORK_SENSORS:
+            self.assertTrue(sensor_def.entity_registry_enabled_default)
+        auto_entity = sensor.WeishauptSensorEntity(
             coordinator=SimpleNamespace(
                 data={"network_ip_mode": {"value_int": 3, "value_hex": "03"}}
             ),
             sensor_def=mode_def,
             entry=SimpleNamespace(entry_id="entry-123"),
         )
+        manual_entity = sensor.WeishauptSensorEntity(
+            coordinator=SimpleNamespace(
+                data={"network_ip_mode": {"value_int": 1, "value_hex": "01"}}
+            ),
+            sensor_def=mode_def,
+            entry=SimpleNamespace(entry_id="entry-123"),
+        )
 
-        self.assertEqual(entity.native_value, "DHCP")
+        self.assertEqual(auto_entity.native_value, "Automatisch (DHCP)")
+        self.assertEqual(manual_entity.native_value, "Manuell")
 
     def test_system_operating_mode_current_mirrors_existing_data(self) -> None:
         """System operating-mode display should mirror the existing writable register."""

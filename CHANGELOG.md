@@ -9,9 +9,10 @@
 - Added selected raw WTC register candidates for real-hardware correlation testing.
 - Added diagnostic attributes with raw and scaled values.
 - Added separate derived Systemgeraet device date and clock-time diagnostic sensors, enabled by default.
-- Added read-only `Weishaupt Systemgeraet Netzwerk` device for hostname and IPv4 network data when supported.
+- Added read-only `Weishaupt Systemgeraet Netzwerk` device for confirmed static IPv4, device-name, certificate-CN, and MAC-address diagnostics when supported.
 - Added empirically confirmed WTC maintenance diagnostics: remaining time until maintenance and maintenance interval.
 - Added detected heating-circuit display names from `systable.csv` with editable override fields.
+- Added real `M02_*.BIN;<display name>;<circuit number>` systable parsing and optional logical device display names from `M01`, `M03`, `M06`, and `M07` rows.
 - Added persisted parsed detected-name mapping separate from manual heating-circuit name overrides.
 - Added read-only `weishaupt_wtc_lan.export_local_metadata` service for troubleshooting local metadata parsing.
 - Added read-only `Systembetriebsart aktuell` mirror sensor derived from the existing system operating-mode register.
@@ -23,7 +24,7 @@
 - Kept experimental polling disabled by default.
 - Probed `wtc_waermeleistung_vpt` adaptively with `VS=4` first and `VS=2` fallback for devices that use a shorter response.
 - Added confidence, probable-unit and probable-scale metadata for selected experimental WTC candidates.
-- Network diagnostics are read once during setup/reload and kept as static coordinator data.
+- Network diagnostics are read once during setup/reload and kept as static coordinator data, including optional read-only GETS strings and a derived MAC address.
 - Retained the historic HK2 technical key prefix `hk_` for backward compatibility.
 
 ### Fixed
@@ -32,7 +33,9 @@
 - Preserved `0.0 kW` as a valid WTC VPT thermal-output value.
 - Corrected the validated Systemgeraet date-byte order: year, month, day.
 - Removed redundant read-only HK2/HK3 operating-mode target sensors while keeping writable selects.
-- Added empirically confirmed IP mode raw value `3` as `DHCP`.
+- Corrected confirmed network IP-mode labels: raw `1` is `Manuell`, raw `3` is `Automatisch (DHCP)`.
+- Replaced the previous optional hostname probe with the confirmed read-only `06/00/250E/00 VS=16 GETS` device-name query; `06/00/2505/00` is not used.
+- Skipped derived MAC-address diagnostics safely when any confirmed MAC component is missing.
 
 ## 0.4.1 - 2026-06-10
 

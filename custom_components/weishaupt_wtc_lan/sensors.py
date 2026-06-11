@@ -213,10 +213,8 @@ PUMPE_MAP = {
 }
 
 IP_MODE_MAP = {
-    0: "Static",
-    1: "DHCP",
-    # Raw value 3 is empirically confirmed as DHCP on the tested Systemgerät firmware.
-    3: "DHCP",
+    1: "Manuell",
+    3: "Automatisch (DHCP)",
 }
 
 
@@ -1240,14 +1238,14 @@ WTC_SENSORS: list[WeishauptSensorDefinition] = [
 NETWORK_SENSORS: list[WeishauptSensorDefinition] = [
     WeishauptSensorDefinition(
         key="network_hostname",
-        name="Hostname",
+        name="Gerätename",
         mi=0x06,
         mx=0x00,
-        ox=0x2505,
+        ox=0x250E,
         os=0x00,
-        vs=64,
+        vs=16,
         group=WeishauptDeviceGroup.SG,
-        modbus_reg="network 06/00/2505/00",
+        modbus_reg="network 06/00/250E/00 GETS",
         icon="mdi:server-network",
         entity_category="diagnostic",
         poll=False,
@@ -1329,6 +1327,55 @@ NETWORK_SENSORS: list[WeishauptSensorDefinition] = [
         poll=False,
         entity_registry_enabled_default=True,
     ),
+    WeishauptSensorDefinition(
+        key="network_certificate_cn",
+        name="Zertifikat-CN",
+        mi=0x06,
+        mx=0x00,
+        ox=0x2511,
+        os=0x00,
+        vs=50,
+        group=WeishauptDeviceGroup.SG,
+        modbus_reg="network 06/00/2511/00 GETS",
+        icon="mdi:certificate-outline",
+        entity_category="diagnostic",
+        poll=False,
+        entity_registry_enabled_default=True,
+    ),
+    WeishauptSensorDefinition(
+        key="network_mac_address",
+        name="MAC-Adresse",
+        mi=0x06,
+        mx=0x00,
+        ox=0x250C,
+        os=0x00,
+        vs=6,
+        group=WeishauptDeviceGroup.SG,
+        modbus_reg="network 06/00/250C/01-06 derived",
+        icon="mdi:expansion-card",
+        entity_category="diagnostic",
+        poll=False,
+        entity_registry_enabled_default=True,
+    ),
+]
+
+
+NETWORK_MAC_COMPONENT_SENSORS: list[WeishauptSensorDefinition] = [
+    WeishauptSensorDefinition(
+        key=f"network_mac_component_{component}",
+        name=f"MAC-Adresse Komponente {component}",
+        mi=0x06,
+        mx=0x00,
+        ox=0x250C,
+        os=component,
+        vs=2,
+        group=WeishauptDeviceGroup.SG,
+        modbus_reg=f"network 06/00/250C/{component:02X}",
+        entity_category="diagnostic",
+        poll=False,
+        entity_registry_enabled_default=False,
+    )
+    for component in range(1, 7)
 ]
 
 

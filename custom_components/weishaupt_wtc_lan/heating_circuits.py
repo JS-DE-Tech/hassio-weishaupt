@@ -26,17 +26,26 @@ DEVICE_GROUP_WTC = "wtc"
 DEVICE_GROUP_WW = "ww"
 DEVICE_GROUP_SOL = "sol"
 
+SYSTABLE_LOGICAL_DEVICE_MODULES = {
+    "m01": DEVICE_GROUP_SYSTEM,
+    "m03": DEVICE_GROUP_WW,
+    "m06": NETWORK_DEVICE_SUFFIX,
+    "m07": DEVICE_GROUP_WTC,
+}
+
 SYSTABLE_DEVICE_GROUP_MARKERS = {
     DEVICE_GROUP_WTC: (
         "wtc",
         "kessel",
         "brennwert",
         "boiler",
+        "m07_",
     ),
     DEVICE_GROUP_WW: (
         "em-ww",
         "warmwasser",
         "domestic hot water",
+        "m03_",
     ),
     DEVICE_GROUP_SOL: (
         "em-sol",
@@ -135,6 +144,7 @@ _SYSTABLE_NAME_HEADERS = {
 
 _SYSTABLE_MI_HEADERS = {"mi", "moduleindex", "module_index", "module"}
 _SYSTABLE_MX_HEADERS = {"mx", "memberindex", "member_index", "member"}
+_SYSTABLE_MODULE_RE = re.compile(r"^(m\d{2})_.*\.bin$", re.IGNORECASE)
 
 
 def heating_circuit_for_sensor(sensor_def: WeishauptSensorDefinition) -> int | None:
@@ -324,6 +334,54 @@ def _heating_circuit_from_inline_address(raw_line: str) -> int | None:
     return None
 
 
+def _real_systable_module(row: list[str]) -> str | None:
+    """Return the real systable module token such as m02 from M02_*.BIN."""
+    for field in row:
+        match = _SYSTABLE_MODULE_RE.match(field.strip())
+        if match is not None:
+            return match.group(1).casefold()
+    return None
+
+
+def _real_systable_name(row: list[str]) -> str | None:
+    """Return the display name following the Mxx_*.BIN field in real systable rows."""
+    for index, field in enumerate(row):
+        if _SYSTABLE_MODULE_RE.match(field.strip()) and index + 1 < len(row):
+            candidate = _clean_systable_name(row[index + 1])
+            if _is_systable_name_candidate(candidate):
+                return candidate
+    return None
+
+
+def _real_systable_circuit(row: list[str]) -> int | None:
+    """Return the final-column HK circuit number for real M02 module rows."""
+    if _real_systable_module(row) != "m02" or not row:
+        return None
+    try:
+        circuit = int(row[-1].strip())
+    except (TypeError, ValueError):
+        return None
+    return circuit if circuit in (1, 2, 3) else None
+
+
+def logical_device_names_from_systable_csv(csv_text: str | None) -> dict[str, str]:
+    """Extract optional logical device display names from real systable rows."""
+    if not csv_text:
+        return {}
+    names: dict[str, str] = {}
+    for row in _systable_rows(csv_text):
+        raw_fields = [field.strip() for field in row if field.strip()]
+        module = _real_systable_module(raw_fields)
+        group = SYSTABLE_LOGICAL_DEVICE_MODULES.get(module or "")
+        if group is None or group in names:
+            continue
+        name = _real_systable_name(raw_fields)
+        if name:
+            names[group] = name
+    _LOGGER.debug("Parsed logical device names from systable.csv: %s", names)
+    return names
+
+
 def _clean_systable_name(value: str) -> str:
     """Normalize a possible display name from a systable field."""
     value = value.strip().strip('"').strip("'").strip()
@@ -372,6 +430,13 @@ def heating_circuit_names_from_systable_csv(csv_text: str | None) -> dict[int, s
         fields_by_header = (
             dict(zip(header, raw_fields, strict=False)) if header is not None else {}
         )
+        real_circuit = _real_systable_circuit(raw_fields)
+        if real_circuit is not None and real_circuit not in names:
+            real_name = _real_systable_name(raw_fields)
+            if real_name:
+                names[real_circuit] = real_name
+                continue
+
         raw_line = " ".join(raw_fields)
         marker = _HK_MARKER_RE.search(raw_line)
         if marker is not None:

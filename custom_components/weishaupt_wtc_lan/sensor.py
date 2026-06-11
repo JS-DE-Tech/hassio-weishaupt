@@ -16,6 +16,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN, EXPERIMENTAL_WTC_DEVICE_SUFFIX, NETWORK_DEVICE_SUFFIX
 from .coordinator import WeishauptDataUpdateCoordinator
 from .heating_circuits import (
+    DEVICE_GROUP_SYSTEM,
     NUMBER_SENSOR_KEYS,
     WARM_WATER_SENSOR_KEYS,
     device_suffix_for_sensor,
@@ -86,6 +87,11 @@ NETWORK_IPV4_SENSOR_KEYS = {
     "network_gateway",
     "network_dns_server",
 }
+NETWORK_STRING_SENSOR_KEYS = {
+    "network_hostname",
+    "network_certificate_cn",
+    "network_mac_address",
+}
 
 SENTINEL_VALUES = {
     2: {0x8000, 0xFFFF},
@@ -124,10 +130,28 @@ def _device_name(
             heating_circuit,
             f"Heizkreis {heating_circuit}",
         )
-    if device_suffix_for_sensor(sensor_def) == NETWORK_DEVICE_SUFFIX:
-        return "Weishaupt Systemgerät Netzwerk"
+    logical_device_names = getattr(coordinator, "logical_device_names", {})
+    suffix = device_suffix_for_sensor(sensor_def)
+    if suffix == NETWORK_DEVICE_SUFFIX:
+        return logical_device_names.get(
+            NETWORK_DEVICE_SUFFIX,
+            "Weishaupt Systemgerät Netzwerk",
+        )
     if sensor_def.key in WARM_WATER_SENSOR_KEYS:
-        return "Weishaupt Warmwasser"
+        return logical_device_names.get(
+            WeishauptDeviceGroup.WW.value,
+            "Weishaupt Warmwasser",
+        )
+    if group == WeishauptDeviceGroup.SG:
+        return logical_device_names.get(
+            DEVICE_GROUP_SYSTEM,
+            f"Weishaupt {DEVICE_GROUP_NAMES.get(group, group.value)}",
+        )
+    if group == WeishauptDeviceGroup.WTC:
+        return logical_device_names.get(
+            WeishauptDeviceGroup.WTC.value,
+            f"Weishaupt {DEVICE_GROUP_NAMES.get(group, group.value)}",
+        )
     return f"Weishaupt {DEVICE_GROUP_NAMES.get(group, group.value)}"
 
 
@@ -161,7 +185,10 @@ async def async_setup_entry(
     device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={_system_device_identifier(entry.entry_id)},
-        name="Weishaupt Systemgerät",
+        name=getattr(coordinator, "logical_device_names", {}).get(
+            DEVICE_GROUP_SYSTEM,
+            "Weishaupt Systemgerät",
+        ),
         manufacturer="Weishaupt",
         model=DEVICE_GROUP_MODELS[WeishauptDeviceGroup.SG],
     )
@@ -316,11 +343,11 @@ class WeishauptSensorEntity(
                 )
                 is not None
             )
-        if self._sensor_def.key == "network_hostname":
+        if self._sensor_def.key in NETWORK_STRING_SENSOR_KEYS:
             return (
                 super().available
                 and self.coordinator.data is not None
-                and self.coordinator.data.get("network_hostname", {}).get(
+                and self.coordinator.data.get(self._sensor_def.key, {}).get(
                     "value_string"
                 )
                 is not None
@@ -376,7 +403,7 @@ class WeishauptSensorEntity(
         data = self.coordinator.data.get(data_key)
         if data is None:
             return None
-        if sensor_def.key == "network_hostname":
+        if sensor_def.key in NETWORK_STRING_SENSOR_KEYS:
             return data.get("value_string")
 
         raw_value = data["value_int"]

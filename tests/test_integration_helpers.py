@@ -177,19 +177,69 @@ class AdaptivePowerClient:
 class NetworkClient:
     """Fake client for network diagnostics probing."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        string_values: dict[tuple[int, int, int, int, int], str] | None = None,
+        mac_components: list[int] | None = None,
+    ) -> None:
         self.params: list[dict] = []
+        self.param_batches: list[list[dict]] = []
+        self.string_calls: list[dict] = []
+        self.string_values = string_values or {}
+        self.mac_components = mac_components
 
     async def read_parameters(self, params: list[dict]) -> dict:
         self.params = params
+        self.param_batches.append(params)
+        mac_by_key = {
+            f"network_mac_component_{index}": value
+            for index, value in enumerate(self.mac_components or [], start=1)
+        }
         return {
-            param["key"]: {"value_int": 0xC0A8012A, "value_hex": "c0a8012a"}
+            param["key"]: {
+                "value_int": (
+                    3
+                    if param["key"] == "network_ip_mode"
+                    else mac_by_key.get(param["key"], 0xC0A8012A)
+                ),
+                "value_hex": (
+                    "03"
+                    if param["key"] == "network_ip_mode"
+                    else f"{mac_by_key[param['key']]:04x}"
+                    if param["key"] in mac_by_key
+                    else "c0a8012a"
+                ),
+            }
             for param in params
-            if param["key"] == "network_ip_address"
+            if param["key"]
+            in {
+                "network_ip_mode",
+                "network_ip_address",
+                "network_subnet_mask",
+                "network_gateway",
+                "network_dns_server",
+                *mac_by_key.keys(),
+            }
         }
 
     async def read_string_parameter(self, *args, **kwargs):
-        return None
+        self.string_calls.append(kwargs)
+        lookup = (
+            kwargs["mi"],
+            kwargs["mx"],
+            kwargs["ox"],
+            kwargs["os_val"],
+            kwargs["vs"],
+        )
+        value = self.string_values.get(lookup)
+        if not value:
+            return None
+        return {
+            "value_int": 0,
+            "value_hex": value.encode("utf-8").hex(),
+            "value_string": value,
+        }
 
 
 class EntityRegistry:
@@ -294,37 +344,128 @@ class IntegrationHelperTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.vs, 2)
         self.assertEqual(client.calls, [4, 2])
 
-    async def test_network_probe_skips_unsupported_hostname(self) -> None:
-        """Network probing should keep numeric values when hostname is unsupported."""
+    async def test_network_probe_skips_unsupported_optional_strings(self) -> None:
+        """Network probing should keep numeric values when optional strings fail."""
         client = NetworkClient()
         supported, static_data = await integration._async_probe_network_sensors(
             client
         )
 
-        self.assertEqual({item.key for item in supported}, {"network_ip_address"})
+        self.assertEqual(
+            {item.key for item in supported},
+            {
+                "network_ip_mode",
+                "network_ip_address",
+                "network_subnet_mask",
+                "network_gateway",
+                "network_dns_server",
+            },
+        )
         self.assertEqual(static_data["network_ip_address"]["value_int"], 0xC0A8012A)
-        self.assertTrue(all(param["key"] != "network_hostname" for param in client.params))
+        self.assertNotIn("network_hostname", static_data)
+        self.assertNotIn("network_certificate_cn", static_data)
+        self.assertNotIn("network_mac_address", static_data)
+
+    async def test_network_probe_uses_confirmed_readonly_queries(self) -> None:
+        """Network probing should use confirmed GET, GETS, and MAC component queries."""
+        client = NetworkClient(
+            string_values={
+                (0x06, 0x00, 0x250E, 0x00, 16): "GATEWAY0",
+                (0x06, 0x00, 0x2511, 0x00, 50): "wem.example.local",
+            },
+            mac_components=[0x00, 0x11, 0x22, 0xAA, 0xBB, 0xCC],
+        )
+
+        supported, static_data = await integration._async_probe_network_sensors(
+            client
+        )
+
+        numeric_queries = {
+            (param["key"], param["mi"], param["mx"], param["ox"], param["os"], param["vs"])
+            for param in client.param_batches[0]
+        }
+        self.assertEqual(
+            numeric_queries,
+            {
+                ("network_ip_mode", 0x06, 0x00, 0x2507, 0x00, 1),
+                ("network_ip_address", 0x06, 0x00, 0x2508, 0x00, 4),
+                ("network_subnet_mask", 0x06, 0x00, 0x2509, 0x00, 4),
+                ("network_gateway", 0x06, 0x00, 0x250A, 0x00, 4),
+                ("network_dns_server", 0x06, 0x00, 0x250B, 0x00, 4),
+            },
+        )
+        self.assertEqual(
+            {
+                (call["mi"], call["mx"], call["ox"], call["os_val"], call["vs"])
+                for call in client.string_calls
+            },
+            {
+                (0x06, 0x00, 0x250E, 0x00, 16),
+                (0x06, 0x00, 0x2511, 0x00, 50),
+            },
+        )
+        self.assertEqual(
+            {
+                (param["key"], param["mi"], param["mx"], param["ox"], param["os"], param["vs"])
+                for param in client.param_batches[1]
+            },
+            {
+                (f"network_mac_component_{index}", 0x06, 0x00, 0x250C, index, 2)
+                for index in range(1, 7)
+            },
+        )
+        self.assertEqual(static_data["network_hostname"]["value_string"], "GATEWAY0")
+        self.assertEqual(
+            static_data["network_certificate_cn"]["value_string"],
+            "wem.example.local",
+        )
+        self.assertEqual(
+            static_data["network_mac_address"]["value_string"],
+            "00-11-22-AA-BB-CC",
+        )
+        self.assertIn("network_mac_address", {item.key for item in supported})
+
+    async def test_network_probe_skips_missing_mac_component(self) -> None:
+        """Missing MAC components should skip the derived MAC entity safely."""
+        client = NetworkClient(mac_components=[0x00, 0x11, 0x22, 0xAA, 0xBB])
+
+        supported, static_data = await integration._async_probe_network_sensors(
+            client
+        )
+
+        self.assertNotIn("network_mac_address", static_data)
+        self.assertNotIn("network_mac_address", {item.key for item in supported})
 
     async def test_network_static_data_is_not_polled_by_coordinator(self) -> None:
         """Network definitions should remain static and out of refresh batches."""
-        network_def = next(
-            item for item in sensors.NETWORK_SENSORS if item.key == "network_ip_address"
-        )
+        network_defs = [
+            item for item in sensors.NETWORK_SENSORS
+            if item.key in {"network_ip_address", "network_mac_address"}
+        ]
         coordinator = integration.WeishauptDataUpdateCoordinator(
             hass=object(),
             client=FakeClient(set()),
-            sensor_definitions=[network_def],
+            sensor_definitions=network_defs,
             static_data={
                 "network_ip_address": {
                     "value_int": 0x0A6401E6,
                     "value_hex": "0a6401e6",
-                }
+                },
+                "network_mac_address": {
+                    "value_int": 0,
+                    "value_hex": "001122aabbcc",
+                    "value_string": "00-11-22-AA-BB-CC",
+                },
             },
         )
 
         data = await coordinator._async_update_data()
 
         self.assertEqual(data["network_ip_address"]["value_int"], 0x0A6401E6)
+        self.assertEqual(
+            data["network_mac_address"]["value_string"],
+            "00-11-22-AA-BB-CC",
+        )
         self.assertEqual(coordinator.client.params, [])
 
     async def test_snapshot_export_writes_json_and_csv_without_credentials(self) -> None:

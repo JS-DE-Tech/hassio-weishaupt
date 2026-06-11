@@ -47,6 +47,7 @@ class WeishauptDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         sensor_definitions: list[WeishauptSensorDefinition] | None = None,
         active_heating_circuits: list[int] | None = None,
         heating_circuit_names: dict[int, str] | None = None,
+        logical_device_names: dict[str, str] | None = None,
         active_device_groups: set[str] | None = None,
         experimental_wtc_registers: list[ExperimentalWtcRegister] | None = None,
         extended_experimental_wtc_registers: list[ExperimentalWtcRegister] | None = None,
@@ -66,6 +67,7 @@ class WeishauptDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
         self.active_heating_circuits = active_heating_circuits or [1]
         self.heating_circuit_names = heating_circuit_names or {}
+        self.logical_device_names = logical_device_names or {}
         self.active_device_groups = active_device_groups or set()
         self.experimental_wtc_registers = experimental_wtc_registers or []
         self.extended_experimental_wtc_registers = (
