@@ -13,7 +13,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, EXPERIMENTAL_WTC_DEVICE_SUFFIX
+from .const import DOMAIN, EXPERIMENTAL_WTC_DEVICE_SUFFIX, NETWORK_DEVICE_SUFFIX
 from .coordinator import WeishauptDataUpdateCoordinator
 from .heating_circuits import (
     NUMBER_SENSOR_KEYS,
@@ -23,9 +23,12 @@ from .heating_circuits import (
     heating_circuit_for_sensor,
 )
 from .parsing import (
+    build_device_clock_time,
+    build_device_date,
     build_device_time_iso,
     decode_fault_status,
     decode_fault_status_attributes,
+    decode_ipv4,
     decode_module_attributes,
     extract_value_segment,
 )
@@ -64,6 +67,24 @@ DEVICE_SUFFIX_MODELS = {
     "hk3": "EM-HK Heizkreis",
     "ww": "Warmwasser",
     EXPERIMENTAL_WTC_DEVICE_SUFFIX: "WTC experimental diagnostics",
+    NETWORK_DEVICE_SUFFIX: "WEM network diagnostics",
+}
+
+DEVICE_DATE_KEYS = [
+    "sg_datum_tag",
+    "sg_datum_monat",
+    "sg_datum_jahr",
+]
+DEVICE_TIME_KEYS = [
+    "sg_uhrzeit_stunden",
+    "sg_uhrzeit_minuten",
+]
+DEVICE_TIMESTAMP_KEYS = DEVICE_TIME_KEYS + DEVICE_DATE_KEYS
+NETWORK_IPV4_SENSOR_KEYS = {
+    "network_ip_address",
+    "network_subnet_mask",
+    "network_gateway",
+    "network_dns_server",
 }
 
 SENTINEL_VALUES = {
@@ -103,6 +124,8 @@ def _device_name(
             heating_circuit,
             f"Heizkreis {heating_circuit}",
         )
+    if device_suffix_for_sensor(sensor_def) == NETWORK_DEVICE_SUFFIX:
+        return "WEM Network Diagnostics"
     if sensor_def.key in WARM_WATER_SENSOR_KEYS:
         return "Weishaupt Warmwasser"
     return f"Weishaupt {DEVICE_GROUP_NAMES.get(group, group.value)}"
@@ -142,7 +165,10 @@ async def async_setup_entry(
         manufacturer="Weishaupt",
         model=DEVICE_GROUP_MODELS[WeishauptDeviceGroup.SG],
     )
-    if coordinator.experimental_wtc_registers:
+    if (
+        coordinator.experimental_wtc_registers
+        or getattr(coordinator, "extended_experimental_wtc_registers", [])
+    ):
         device_registry.async_get_or_create(
             config_entry_id=entry.entry_id,
             identifiers={
@@ -171,6 +197,14 @@ async def async_setup_entry(
         )
 
     for register in coordinator.experimental_wtc_registers:
+        entities.append(
+            WeishauptExperimentalWtcSensorEntity(
+                coordinator=coordinator,
+                register=register,
+                entry=entry,
+            )
+        )
+    for register in getattr(coordinator, "extended_experimental_wtc_registers", []):
         entities.append(
             WeishauptExperimentalWtcSensorEntity(
                 coordinator=coordinator,
@@ -257,17 +291,38 @@ class WeishauptSensorEntity(
     def available(self) -> bool:
         """Return True if the sensor data is available."""
         if self._sensor_def.key == "sg_device_time":
-            required_keys = [
-                "sg_uhrzeit_stunden",
-                "sg_uhrzeit_minuten",
-                "sg_datum_tag",
-                "sg_datum_monat",
-                "sg_datum_jahr",
-            ]
+            required_keys = DEVICE_TIMESTAMP_KEYS
             return (
                 super().available
                 and self.coordinator.data is not None
                 and all(key in self.coordinator.data for key in required_keys)
+            )
+        if self._sensor_def.key == "sg_device_date":
+            return (
+                super().available
+                and self.coordinator.data is not None
+                and all(key in self.coordinator.data for key in DEVICE_DATE_KEYS)
+                and build_device_date(self._device_component_values(DEVICE_DATE_KEYS))
+                is not None
+            )
+        if self._sensor_def.key == "sg_device_clock_time":
+            return (
+                super().available
+                and self.coordinator.data is not None
+                and all(key in self.coordinator.data for key in DEVICE_TIME_KEYS)
+                and build_device_clock_time(
+                    self._device_component_values(DEVICE_TIME_KEYS)
+                )
+                is not None
+            )
+        if self._sensor_def.key == "network_hostname":
+            return (
+                super().available
+                and self.coordinator.data is not None
+                and self.coordinator.data.get("network_hostname", {}).get(
+                    "value_string"
+                )
+                is not None
             )
 
         data_key = self._sensor_def.source_key or self._sensor_def.key
@@ -276,6 +331,20 @@ class WeishauptSensorEntity(
             and self.coordinator.data is not None
             and data_key in self.coordinator.data
         )
+
+    def _device_component_values(self, keys: list[str]) -> dict[str, int]:
+        """Return raw date/time component values from coordinator data."""
+        values: dict[str, int] = {}
+        if self.coordinator.data is None:
+            return values
+        for key in keys:
+            data = self.coordinator.data.get(key)
+            if data is None:
+                continue
+            raw_value = data.get("value_int")
+            if raw_value is not None:
+                values[key] = raw_value
+        return values
 
     @callback
     def _handle_coordinator_update(self) -> None:
@@ -292,26 +361,22 @@ class WeishauptSensorEntity(
 
         # Special handling for the consolidated device time sensor
         if sensor_def.key == "sg_device_time":
-            required_keys = [
-                "sg_uhrzeit_stunden",
-                "sg_uhrzeit_minuten",
-                "sg_datum_tag",
-                "sg_datum_monat",
-                "sg_datum_jahr",
-            ]
-            vals: dict[str, int] = {}
-            for k in required_keys:
-                d = self.coordinator.data.get(k)
-                if d is None:
-                    return None
-                vals[k] = d.get("value_int", 0)
-
-            return build_device_time_iso(vals)
+            return build_device_time_iso(
+                self._device_component_values(DEVICE_TIMESTAMP_KEYS)
+            )
+        if sensor_def.key == "sg_device_date":
+            return build_device_date(self._device_component_values(DEVICE_DATE_KEYS))
+        if sensor_def.key == "sg_device_clock_time":
+            return build_device_clock_time(
+                self._device_component_values(DEVICE_TIME_KEYS)
+            )
 
         data_key = sensor_def.source_key or sensor_def.key
         data = self.coordinator.data.get(data_key)
         if data is None:
             return None
+        if sensor_def.key == "network_hostname":
+            return data.get("value_string")
 
         raw_value = data["value_int"]
         value_size = sensor_def.byte_length or sensor_def.vs
@@ -332,6 +397,9 @@ class WeishauptSensorEntity(
             return None
         if value_size == 4 and raw_value in (0x80000000, 0xFFFFFFFF):
             return None
+
+        if sensor_def.key in NETWORK_IPV4_SENSOR_KEYS:
+            return decode_ipv4(raw_value, data.get("value_hex", ""))
 
         # Handle signed values
         if sensor_def.signed and value_size == 2:
@@ -505,5 +573,8 @@ class WeishauptExperimentalWtcSensorEntity(
             "os": f"0x{self._register.os:02X}",
             "vs": self._register.vs,
             "candidate_hint": self._register.hint,
-            "confidence": "experimental",
+            "confidence": self._register.confidence,
+            "probable_unit": self._register.probable_unit,
+            "probable_scale": self._register.probable_scale,
+            "notes": self._register.notes,
         }

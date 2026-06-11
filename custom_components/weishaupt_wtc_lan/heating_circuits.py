@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import csv
 from dataclasses import replace
+import re
 
+from .const import NETWORK_DEVICE_SUFFIX
 from .sensors import (
     HK_SENSORS,
+    NETWORK_SENSORS,
     SG_SENSORS,
     SOL_SENSORS,
     WTC_SENSORS,
@@ -76,9 +80,37 @@ SELECT_SENSOR_KEYS = {
     "sg_systembetriebsart",
 }
 
+NETWORK_SENSOR_KEYS = {sensor_def.key for sensor_def in NETWORK_SENSORS}
+
 PRESENCE_SENTINELS = {
     2: {0x8000, 0xFFFF},
     4: {0x80000000, 0xFFFFFFFF},
+}
+
+_HK_MARKER_RE = re.compile(r"\b(?:hk|heizkreis)\s*([123])\b", re.IGNORECASE)
+_HK_NAME_MARKER_RE = re.compile(r"\b(?:hk|heizkreis)\s*[123]\b", re.IGNORECASE)
+_SYSTABLE_NAME_NOISE = {
+    "address",
+    "adresse",
+    "device",
+    "geraet",
+    "gerät",
+    "group",
+    "id",
+    "index",
+    "mi",
+    "module",
+    "mx",
+    "name",
+    "os",
+    "ox",
+    "parameter",
+    "register",
+    "type",
+    "typ",
+    "value",
+    "wert",
+    "vs",
 }
 
 
@@ -107,6 +139,8 @@ def heating_circuit_device_suffix(sensor_def: WeishauptSensorDefinition) -> str 
 
 def device_suffix_for_sensor(sensor_def: WeishauptSensorDefinition) -> str:
     """Return the logical device suffix for a sensor definition."""
+    if sensor_def.key in NETWORK_SENSOR_KEYS:
+        return NETWORK_DEVICE_SUFFIX
     heating_suffix = heating_circuit_device_suffix(sensor_def)
     if heating_suffix:
         return heating_suffix
@@ -117,6 +151,8 @@ def device_suffix_for_sensor(sensor_def: WeishauptSensorDefinition) -> str:
 
 def logical_group_for_sensor(sensor_def: WeishauptSensorDefinition) -> str:
     """Return the logical group used for dynamic device filtering."""
+    if sensor_def.key in NETWORK_SENSOR_KEYS:
+        return DEVICE_GROUP_SYSTEM
     if sensor_def.key in WARM_WATER_SENSOR_KEYS:
         return DEVICE_GROUP_WW
     if sensor_def.group.value == DEVICE_GROUP_SOL:
@@ -167,6 +203,101 @@ def device_groups_from_systable_csv(csv_text: str) -> set[str]:
         if any(marker in text for marker in markers):
             groups.add(group)
     return groups
+
+
+def _systable_rows(csv_text: str) -> list[list[str]]:
+    """Return loose CSV rows from systable text using common delimiters."""
+    rows: list[list[str]] = []
+    for raw_line in csv_text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        delimiter = ";"
+        for candidate in (";", "\t", ","):
+            if candidate in line:
+                delimiter = candidate
+                break
+        try:
+            rows.extend(csv.reader([line], delimiter=delimiter))
+        except csv.Error:
+            rows.append(re.split(r"[;,\t]", line))
+    return rows
+
+
+def _clean_systable_name(value: str) -> str:
+    """Normalize a possible display name from a systable field."""
+    value = value.strip().strip('"').strip("'").strip()
+    value = _HK_NAME_MARKER_RE.sub("", value)
+    value = value.replace("->", " ").replace(":", " ").replace("=", " ")
+    value = re.sub(r"\s+", " ", value).strip(" -_/")
+    return value
+
+
+def _is_systable_name_candidate(value: str) -> bool:
+    """Return True when a field looks like a user-facing heating-circuit name."""
+    if not value or not any(char.isalpha() for char in value):
+        return False
+    folded = value.casefold()
+    if folded in _SYSTABLE_NAME_NOISE:
+        return False
+    if folded.startswith(("0x", "wem", "em-hk")):
+        return False
+    if all(part.casefold() in _SYSTABLE_NAME_NOISE for part in folded.split()):
+        return False
+    return True
+
+
+def heating_circuit_names_from_systable_csv(csv_text: str | None) -> dict[int, str]:
+    """Extract heating-circuit display names from systable.csv when present."""
+    if not csv_text:
+        return {}
+
+    names: dict[int, str] = {}
+    for row in _systable_rows(csv_text):
+        raw_fields = [field.strip() for field in row if field.strip()]
+        if not raw_fields:
+            continue
+        raw_line = " ".join(raw_fields)
+        marker = _HK_MARKER_RE.search(raw_line)
+        if marker is None:
+            continue
+        circuit = int(marker.group(1))
+        if circuit in names:
+            continue
+
+        candidates = [_clean_systable_name(field) for field in raw_fields]
+        candidates.extend(
+            _clean_systable_name(part)
+            for part in re.split(r"->|:|=", raw_line)
+        )
+        for candidate in candidates:
+            if _is_systable_name_candidate(candidate):
+                names[circuit] = candidate
+                break
+    return names
+
+
+def resolve_heating_circuit_names(
+    overrides: dict[int, str | None] | None,
+    detected_names: dict[int, str] | None,
+    use_detected_names: bool,
+    fallbacks: dict[int, str],
+) -> dict[int, str]:
+    """Resolve display names from explicit overrides, detected names, and defaults."""
+    overrides = overrides or {}
+    detected_names = detected_names or {}
+    resolved: dict[int, str] = {}
+    for circuit in (1, 2, 3):
+        explicit = (overrides.get(circuit) or "").strip()
+        if explicit:
+            resolved[circuit] = explicit
+            continue
+        detected = (detected_names.get(circuit) or "").strip()
+        if use_detected_names and detected:
+            resolved[circuit] = detected
+            continue
+        resolved[circuit] = fallbacks[circuit]
+    return resolved
 
 
 def _offset_modbus_register(register: str, offset: int) -> str:

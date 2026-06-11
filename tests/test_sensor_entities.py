@@ -219,7 +219,102 @@ class SensorEntityTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(attrs["scaled_x0_01"], 5.97)
         self.assertEqual(attrs["mi"], "0x09")
         self.assertEqual(attrs["ox"], "0x2612")
-        self.assertEqual(attrs["confidence"], "experimental")
+        self.assertEqual(attrs["confidence"], "candidate")
+        self.assertEqual(attrs["probable_unit"], "°C")
+        self.assertEqual(attrs["probable_scale"], 0.1)
+
+    def test_vpt_power_zero_is_valid_for_adaptive_value_sizes(self) -> None:
+        """WTC VPT power should expose raw zero as 0.0 kW for VS=4 and VS=2."""
+        sensor_def = sensor_by_key("wtc_waermeleistung_vpt")
+        entry = SimpleNamespace(entry_id="entry-123")
+        for value_size, raw_hex in ((4, "00000000"), (2, "0000")):
+            coordinator = SimpleNamespace(
+                data={
+                    sensor_def.key: {
+                        "value_int": 0,
+                        "value_hex": raw_hex,
+                    }
+                },
+            )
+            entity = sensor.WeishauptSensorEntity(
+                coordinator=coordinator,
+                sensor_def=types.SimpleNamespace(
+                    **{**sensor_def.__dict__, "vs": value_size}
+                ),
+                entry=entry,
+            )
+            self.assertTrue(entity.available)
+            self.assertEqual(entity.native_value, 0.0)
+
+    def test_device_date_and_clock_time_are_derived_from_components(self) -> None:
+        """Separate device date/time sensors should use existing SG components."""
+        coordinator = SimpleNamespace(
+            data={
+                "sg_uhrzeit_stunden": {"value_int": 17, "value_hex": "11"},
+                "sg_uhrzeit_minuten": {"value_int": 25, "value_hex": "19"},
+                "sg_datum_tag": {"value_int": 11, "value_hex": "0b"},
+                "sg_datum_monat": {"value_int": 6, "value_hex": "06"},
+                "sg_datum_jahr": {"value_int": 26, "value_hex": "1a"},
+            },
+        )
+        entry = SimpleNamespace(entry_id="entry-123")
+
+        date_entity = sensor.WeishauptSensorEntity(
+            coordinator=coordinator,
+            sensor_def=sensor_by_key("sg_device_date"),
+            entry=entry,
+        )
+        time_entity = sensor.WeishauptSensorEntity(
+            coordinator=coordinator,
+            sensor_def=sensor_by_key("sg_device_clock_time"),
+            entry=entry,
+        )
+
+        self.assertTrue(date_entity.available)
+        self.assertEqual(date_entity.native_value, "11.06.2026")
+        self.assertTrue(time_entity.available)
+        self.assertEqual(time_entity.native_value, "17:25")
+
+    def test_network_values_render_on_network_device(self) -> None:
+        """Network diagnostics should decode IPv4 values and use their own device."""
+        ip_def = next(
+            item for item in sensors.NETWORK_SENSORS if item.key == "network_ip_address"
+        )
+        host_def = next(
+            item for item in sensors.NETWORK_SENSORS if item.key == "network_hostname"
+        )
+        coordinator = SimpleNamespace(
+            data={
+                "network_ip_address": {
+                    "value_int": 0xC0A8012A,
+                    "value_hex": "c0a8012a",
+                },
+                "network_hostname": {
+                    "value_int": 0,
+                    "value_hex": "57454d2d534700",
+                    "value_string": "WEM-SG",
+                },
+            },
+        )
+        entry = SimpleNamespace(entry_id="entry-123")
+
+        ip_entity = sensor.WeishauptSensorEntity(
+            coordinator=coordinator,
+            sensor_def=ip_def,
+            entry=entry,
+        )
+        host_entity = sensor.WeishauptSensorEntity(
+            coordinator=coordinator,
+            sensor_def=host_def,
+            entry=entry,
+        )
+
+        self.assertEqual(ip_entity.native_value, "192.168.1.42")
+        self.assertEqual(host_entity.native_value, "WEM-SG")
+        self.assertEqual(
+            ip_entity.device_info["identifiers"],
+            {("weishaupt_wtc_lan", "entry-123_network")},
+        )
 
     def test_experimental_zero_is_valid_and_sentinel_is_unavailable(self) -> None:
         """Raw zero should remain valid while sentinel values are unavailable."""
@@ -263,6 +358,7 @@ class SensorEntityTests(unittest.IsolatedAsyncioTestCase):
         coordinator = SimpleNamespace(
             sensor_definitions=[],
             experimental_wtc_registers=[],
+            extended_experimental_wtc_registers=[],
         )
         hass = SimpleNamespace(data={"weishaupt_wtc_lan": {"entry-123": coordinator}})
 

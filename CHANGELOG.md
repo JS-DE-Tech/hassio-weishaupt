@@ -8,14 +8,23 @@
 - Added optional read-only `WTC Experimental Diagnostics` device.
 - Added selected raw WTC register candidates for real-hardware correlation testing.
 - Added diagnostic attributes with raw and scaled values.
+- Added separate derived Systemgeraet device date and clock-time diagnostic sensors.
+- Added read-only `WEM Network Diagnostics` device for hostname and IPv4 network data when supported.
+- Added empirically confirmed WTC maintenance diagnostics: remaining time until maintenance and maintenance interval.
+- Added detected heating-circuit display names from `systable.csv` with editable override fields.
+- Added optional extended experimental WTC catalog infrastructure, capped at 100 explicitly listed entities and disabled by default.
+- Added `weishaupt_wtc_lan.export_experimental_snapshot` service to export JSON and CSV correlation snapshots.
 
 ### Changed
 - Kept CanApiJson read batches limited to six frames for improved reliability.
 - Kept experimental polling disabled by default.
+- Probed `wtc_waermeleistung_vpt` adaptively with `VS=4` first and `VS=2` fallback for devices that use a shorter response.
+- Added confidence, probable-unit and probable-scale metadata for selected experimental WTC candidates.
 
 ### Fixed
 - Preserved valid raw zero values in regular and experimental read paths.
 - Ensured that a failing experimental register does not discard valid values from the same batch.
+- Preserved `0.0 kW` as a valid WTC VPT thermal-output value.
 
 ## 0.4.1 - 2026-06-10
 

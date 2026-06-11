@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace
 import sys
+import tempfile
 import types
 import unittest
 
@@ -122,7 +124,7 @@ sys.modules["custom_components.weishaupt_wtc_lan"] = integration_pkg
 
 load_module("custom_components.weishaupt_wtc_lan.const", PACKAGE_ROOT / "const.py")
 load_module("custom_components.weishaupt_wtc_lan.api", PACKAGE_ROOT / "api.py")
-load_module("custom_components.weishaupt_wtc_lan.sensors", PACKAGE_ROOT / "sensors.py")
+sensors = load_module("custom_components.weishaupt_wtc_lan.sensors", PACKAGE_ROOT / "sensors.py")
 load_module(
     "custom_components.weishaupt_wtc_lan.heating_circuits",
     PACKAGE_ROOT / "heating_circuits.py",
@@ -150,6 +152,40 @@ class FakeClient:
             for param in params
             if param["key"] in self.supported_keys
         }
+
+
+class AdaptivePowerClient:
+    """Fake client for adaptive WTC power probing."""
+
+    def __init__(self, supported_vs: set[int]) -> None:
+        self.supported_vs = supported_vs
+        self.calls: list[int] = []
+
+    async def read_parameters(self, params: list[dict]) -> dict:
+        param = params[0]
+        self.calls.append(param["vs"])
+        if param["vs"] in self.supported_vs:
+            return {
+                param["key"]: {
+                    "value_int": 0,
+                    "value_hex": "00" * param["vs"],
+                }
+            }
+        return {}
+
+
+class NetworkClient:
+    """Fake client for network diagnostics probing."""
+
+    async def read_parameters(self, params: list[dict]) -> dict:
+        return {
+            param["key"]: {"value_int": 0xC0A8012A, "value_hex": "c0a8012a"}
+            for param in params
+            if param["key"] == "network_ip_address"
+        }
+
+    async def read_string_parameter(self, *args, **kwargs):
+        return None
 
 
 class EntityRegistry:
@@ -196,6 +232,91 @@ class IntegrationHelperTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual({register.key for register in registers}, supported)
         self.assertEqual(len(client.params), 19)
+
+    async def test_adaptive_wtc_power_keeps_vs4_zero_when_supported(self) -> None:
+        """Adaptive WTC power probing should preserve raw zero for VS=4."""
+        sensor_def = next(
+            item
+            for item in sensors.WTC_SENSORS
+            if item.key == "wtc_waermeleistung_vpt"
+        )
+        client = AdaptivePowerClient({4})
+
+        result = await integration._async_probe_wtc_power_definition(
+            client,
+            sensor_def,
+        )
+
+        self.assertEqual(result.vs, 4)
+        self.assertEqual(client.calls, [4])
+
+    async def test_adaptive_wtc_power_falls_back_to_vs2(self) -> None:
+        """Adaptive WTC power probing should try VS=2 after VS=4 errors."""
+        sensor_def = next(
+            item
+            for item in sensors.WTC_SENSORS
+            if item.key == "wtc_waermeleistung_vpt"
+        )
+        client = AdaptivePowerClient({2})
+
+        result = await integration._async_probe_wtc_power_definition(
+            client,
+            sensor_def,
+        )
+
+        self.assertEqual(result.vs, 2)
+        self.assertEqual(client.calls, [4, 2])
+
+    async def test_network_probe_skips_unsupported_hostname(self) -> None:
+        """Network probing should keep numeric values when hostname is unsupported."""
+        supported, static_data = await integration._async_probe_network_sensors(
+            NetworkClient()
+        )
+
+        self.assertEqual({item.key for item in supported}, {"network_ip_address"})
+        self.assertEqual(static_data, {})
+
+    async def test_snapshot_export_writes_json_and_csv_without_credentials(self) -> None:
+        """Snapshot export should write local files without credentials."""
+        sensor_def = next(
+            item
+            for item in sensors.WTC_SENSORS
+            if item.key == "wtc_brennerstarts_gesamt"
+        )
+        coordinator = SimpleNamespace(
+            data={sensor_def.key: {"value_int": 7, "value_hex": "0007"}},
+            sensor_definitions=[sensor_def],
+            experimental_wtc_registers=[],
+            extended_experimental_wtc_registers=[],
+        )
+        entry = SimpleNamespace(
+            entry_id="entry-123",
+            data={
+                "host": "wem-sg.local",
+                "username": "admin",
+                "password": "Admin123",
+            },
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            hass = SimpleNamespace(
+                config=SimpleNamespace(
+                    path=lambda *parts: str(Path(tmpdir, *parts))
+                )
+            )
+
+            paths = await integration._async_export_experimental_snapshot(
+                hass,
+                entry,
+                coordinator,
+            )
+
+            json_text = Path(paths["json_path"]).read_text(encoding="utf-8")
+            csv_text = Path(paths["csv_path"]).read_text(encoding="utf-8")
+            payload = json.loads(json_text)
+            self.assertEqual(payload["host_identifier"], "wem-sg.local")
+            self.assertIn("wtc_brennerstarts_gesamt", json_text)
+            self.assertIn("wtc_brennerstarts_gesamt", csv_text)
+            self.assertNotIn("Admin123", json_text + csv_text)
 
     async def test_cleanup_removes_stale_experimental_device_without_foreign_entries(
         self,

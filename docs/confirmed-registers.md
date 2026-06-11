@@ -205,8 +205,19 @@ A permanent domestic-hot-water enable/disable register has not yet been confirme
 | `wtc_tageswaermemenge_vortag_heizen` | Previous-day heat quantity: heating | `0x09` | `0x01` | `0x2626` | `0x02` | `4` | × `0.01 kWh` | Confirmed |
 | `wtc_tageswaermemenge_vortag_warmwasser` | Previous-day heat quantity: domestic hot water | `0x09` | `0x01` | `0x2627` | `0x02` | `4` | × `0.01 kWh` | Confirmed |
 | `wtc_tageswaermemenge_vortag_gesamt` | Previous-day heat quantity: total | `0x09` | `0x01` | `0x2628` | `0x02` | `4` | × `0.01 kWh` | Confirmed |
+| `wtc_zeit_bis_wartung` | Remaining time until maintenance | `0x09` | `0x01` | `0x2641` | `0x00` | `2` | `h` | Empirically confirmed |
+| `wtc_wartungsintervall` | Maintenance interval | `0x09` | `0x01` | `0x2642` | `0x00` | `2` | `h` | Empirically confirmed |
 | `wtc_brennerstarts_gesamt` | Burner starts total | `0x09` | `0x01` | `0x2920` | `0x00` | `2` | count | Empirically confirmed |
 | `wtc_betriebsstunden_gesamt` | Burner operating hours total | `0x09` | `0x01` | `0x2921` | `0x00` | `2` | `h` | Empirically confirmed |
+
+`wtc_waermeleistung_vpt` is probed with `VS=4` first and `VS=2` as a fallback.
+Both sizes use the same confirmed address and preserve raw `0` as valid
+`0.0 kW`.
+
+The maintenance values were correlated against a real installation display
+showing roughly `4997 h` remaining and a `5000 h` interval. They are read-only
+diagnostics only; the integration does not expose reset or write operations for
+maintenance.
 
 ### Confirmed Real WTC Responses
 
@@ -274,11 +285,11 @@ support.
 
 | Address | VS | Notes |
 |---|---:|---|
-| `09/01/2610/02` | `2` | Curated experimental candidate |
-| `09/01/2611/02` | `2` | Curated experimental candidate |
-| `09/01/2612/02` | `2` | Curated experimental candidate |
-| `09/01/2615/02` | `2` | Curated experimental candidate |
-| `09/01/2619/02` | `1` | Curated experimental candidate |
+| `09/01/2610/02` | `2` | Candidate temperature-related WTC value, probable scale `0.1 C` |
+| `09/01/2611/02` | `2` | Candidate temperature-related WTC value, probable scale `0.1 C` |
+| `09/01/2612/02` | `2` | Candidate temperature-related WTC value, probable scale `0.1 C` |
+| `09/01/2615/02` | `2` | Probable VPT flow temperature, probable scale `0.1 C` |
+| `09/01/2619/02` | `1` | Probable internal pump modulation, probable unit `%` |
 | `09/01/263A/02` | `2` | Curated experimental candidate |
 | `09/01/2679/00` | `2` | Curated experimental candidate |
 | `09/01/268A/00` | `4` | Curated experimental candidate |
@@ -294,6 +305,31 @@ support.
 | `09/01/2908/00` | `2` | Curated experimental candidate |
 | `09/01/2922/00` | `1` | Curated experimental candidate |
 
+Experimental entities keep the primary state as the raw signed integer. Hints,
+confidence, probable unit, and probable scale are exposed only as attributes
+until the register meaning is confirmed.
+
+Raw experimental `0` or `1` values are not automatically classified as binary
+states. Confirmed binary/state-like values can keep explicit mappings such as
+`Ein` / `Aus`, but unconfirmed candidates remain raw diagnostics.
+
+### Extended Experimental Catalog
+
+The option `Enable extended experimental read-only WTC sensors` adds
+infrastructure for a capped second catalog under the same `WTC Experimental
+Diagnostics` device. The catalog is disabled by default, is only evaluated when
+curated experimental sensors are enabled, and is capped at 100 explicitly listed
+addresses.
+
+Current catalog: empty.
+
+Reason: the committed discovery artifacts contain broad scan outputs and
+candidate hits, but not a reviewed semantic list that safely excludes mirrors,
+static tables, network values, already confirmed regular sensors, and existing
+curated experimental entries. A curated correlation artifact with address,
+observed values over time, suspected meaning, and exclusion rationale is needed
+before populating this list.
+
 ## Network Diagnostic Registers
 
 These values were confirmed through the local web-interface JavaScript and read-only requests.
@@ -305,6 +341,35 @@ These values were confirmed through the local web-interface JavaScript and read-
 | Subnet mask | `0x06` | `0x00` | `0x2509` | `0x00` | `4` | IPv4 |
 | Gateway | `0x06` | `0x00` | `0x250A` | `0x00` | `4` | IPv4 |
 | DNS server | `0x06` | `0x00` | `0x250B` | `0x00` | `4` | IPv4 |
+
+Hostname is probed with the protocol string-read command at
+`06/00/2505/00`. It is exposed only when the device returns a supported string
+response.
+
+## Derived Device Date and Time
+
+The integration derives separate diagnostic date and clock-time sensors from
+the existing raw Systemgeraet components:
+
+| Derived key | Source components | Format |
+|---|---|---|
+| `sg_device_date` | `sg_datum_tag`, `sg_datum_monat`, `sg_datum_jahr` | `DD.MM.YYYY` |
+| `sg_device_clock_time` | `sg_uhrzeit_stunden`, `sg_uhrzeit_minuten` | `HH:MM` |
+
+No extra protocol reads are added for these derived sensors. The raw component
+entities and the backward-compatible combined timestamp remain available as
+diagnostic entities and are disabled by default.
+
+## Snapshot Export Workflow
+
+The service `weishaupt_wtc_lan.export_experimental_snapshot` writes one JSON
+and one CSV file under `/config/weishaupt_wtc_lan_diagnostics/`.
+
+Snapshots include timestamp, integration version, host identifier without
+credentials, regular WTC values, network diagnostics when available, curated
+experimental values, and extended experimental values when enabled. They do not
+export passwords, authorization headers, HTTP Basic credentials, tokens, or
+cookies.
 
 ## Broad Experimental Candidates
 

@@ -193,6 +193,44 @@ class ApiClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["key_2"]["value_int"], 0)
         self.assertEqual(result["key_3"]["value_int"], 597)
 
+    async def test_read_string_parameter_decodes_supported_hostname(self) -> None:
+        """String read should decode a supported NUL-terminated hostname."""
+        value_hex = "57454d2d534700" + ("00" * 58)
+        client = SequenceResponseClient(
+            [
+                capi_batch_response(
+                    [
+                        (
+                            f"{api.CMD_RESPONSE_STRING:02x}0600250500"
+                            f"{64:04x}{value_hex}"
+                        )
+                    ]
+                )
+            ]
+        )
+
+        result = await client.read_string_parameter(0x06, 0x00, 0x2505, 0x00, 64)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["value_string"], "WEM-SG")
+        self.assertEqual(client.payloads[0]["CAPI"]["NN"], 1)
+        self.assertIn(f"{api.CMD_GET_STRING:02x}", client.payloads[0]["CAPI"]["N01"]["VG"][:2])
+
+    async def test_read_string_parameter_returns_none_when_unsupported(self) -> None:
+        """Unsupported string reads should not fail setup."""
+        client = SequenceResponseClient(
+            [
+                capi_batch_response(
+                    [vg_with_value(api.CMD_ERROR, 0x06, 0x00, 0x2505, 0x00, 64, 0)]
+                )
+            ]
+        )
+
+        result = await client.read_string_parameter(0x06, 0x00, 0x2505, 0x00, 64)
+
+        self.assertIsNone(result)
+
 
 if __name__ == "__main__":
     unittest.main()

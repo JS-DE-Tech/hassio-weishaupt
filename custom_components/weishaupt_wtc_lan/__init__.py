@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
+import csv
+from dataclasses import replace
+from datetime import datetime, timezone
+import json
 import logging
+import os
+from pathlib import Path
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_USERNAME, Platform
@@ -13,16 +20,22 @@ from homeassistant.helpers import entity_registry as er
 
 from .api import ProbeStatus, WeishauptApiClient
 from .const import (
+    CONF_ENABLE_EXTENDED_EXPERIMENTAL_WTC_SENSORS,
     CONF_ENABLE_EXPERIMENTAL_WTC_SENSORS,
     CONF_HK1_NAME,
     CONF_HK2_NAME,
     CONF_HK3_NAME,
     CONF_SCAN_INTERVAL,
+    CONF_USE_DETECTED_HEATING_CIRCUIT_NAMES,
+    DEFAULT_ENABLE_EXTENDED_EXPERIMENTAL_WTC_SENSORS,
     DEFAULT_ENABLE_EXPERIMENTAL_WTC_SENSORS,
     DEFAULT_HEATING_CIRCUIT_NAMES,
+    DEFAULT_USE_DETECTED_HEATING_CIRCUIT_NAMES,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     EXPERIMENTAL_WTC_DEVICE_SUFFIX,
+    NETWORK_DEVICE_SUFFIX,
+    SERVICE_EXPORT_EXPERIMENTAL_SNAPSHOT,
 )
 from .coordinator import WeishauptDataUpdateCoordinator
 from .heating_circuits import (
@@ -32,10 +45,19 @@ from .heating_circuits import (
     DEVICE_GROUP_WW,
     build_sensor_definitions,
     device_groups_from_systable_csv,
+    heating_circuit_names_from_systable_csv,
     is_plausible_presence_value,
     probe_sensor_definitions_for_group,
+    resolve_heating_circuit_names,
 )
-from .sensors import EXPERIMENTAL_WTC_REGISTERS, ExperimentalWtcRegister
+from .sensors import (
+    EXPERIMENTAL_WTC_REGISTERS,
+    EXTENDED_EXPERIMENTAL_WTC_MAX_ENTITIES,
+    EXTENDED_EXPERIMENTAL_WTC_REGISTERS,
+    NETWORK_SENSORS,
+    ExperimentalWtcRegister,
+    WeishauptSensorDefinition,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -45,6 +67,9 @@ PLATFORMS: list[Platform] = [
     Platform.NUMBER,
     Platform.BUTTON,
 ]
+
+WTC_POWER_KEY = "wtc_waermeleistung_vpt"
+NETWORK_HOSTNAME_KEY = "network_hostname"
 
 
 async def _async_detect_device_group(
@@ -126,6 +151,7 @@ async def _async_detect_heating_circuit(
 
 async def _async_probe_experimental_wtc_registers(
     client: WeishauptApiClient,
+    registers: tuple[ExperimentalWtcRegister, ...] = EXPERIMENTAL_WTC_REGISTERS,
 ) -> list[ExperimentalWtcRegister]:
     """Return curated experimental WTC registers with setup-time responses."""
     params = [
@@ -137,16 +163,272 @@ async def _async_probe_experimental_wtc_registers(
             "os": register.os,
             "vs": register.vs,
         }
-        for register in EXPERIMENTAL_WTC_REGISTERS
+        for register in registers
     ]
     results = await client.read_parameters(params)
     supported = [
-        register for register in EXPERIMENTAL_WTC_REGISTERS if register.key in results
+        register for register in registers if register.key in results
     ]
     _LOGGER.debug(
         "Detected %s supported experimental WTC registers", len(supported)
     )
     return supported
+
+
+async def _async_probe_wtc_power_definition(
+    client: WeishauptApiClient,
+    sensor_def: WeishauptSensorDefinition,
+) -> WeishauptSensorDefinition:
+    """Return the supported value-size definition for WTC VPT power."""
+    if sensor_def.key != WTC_POWER_KEY:
+        return sensor_def
+
+    for value_size in (4, 2):
+        probe_def = replace(sensor_def, vs=value_size)
+        results = await client.read_parameters(
+            [
+                {
+                    "key": probe_def.key,
+                    "mi": probe_def.mi,
+                    "mx": probe_def.mx,
+                    "ox": probe_def.ox,
+                    "os": probe_def.os,
+                    "vs": probe_def.vs,
+                }
+            ]
+        )
+        if probe_def.key in results:
+            if value_size != sensor_def.vs:
+                _LOGGER.debug("Using VS=%s for %s", value_size, sensor_def.key)
+            return probe_def
+
+    _LOGGER.debug("No supported value size found for %s", sensor_def.key)
+    return replace(sensor_def, poll=False)
+
+
+async def _async_probe_network_sensors(
+    client: WeishauptApiClient,
+) -> tuple[list[WeishauptSensorDefinition], dict[str, Any]]:
+    """Probe optional read-only network diagnostics."""
+    numeric_definitions = [
+        sensor_def
+        for sensor_def in NETWORK_SENSORS
+        if sensor_def.key != NETWORK_HOSTNAME_KEY
+    ]
+    params = [
+        {
+            "key": sensor_def.key,
+            "mi": sensor_def.mi,
+            "mx": sensor_def.mx,
+            "ox": sensor_def.ox,
+            "os": sensor_def.os,
+            "vs": sensor_def.vs,
+        }
+        for sensor_def in numeric_definitions
+    ]
+    results = await client.read_parameters(params)
+    supported = [sensor_def for sensor_def in numeric_definitions if sensor_def.key in results]
+    static_data: dict[str, Any] = {}
+
+    hostname_def = next(
+        (sensor_def for sensor_def in NETWORK_SENSORS if sensor_def.key == NETWORK_HOSTNAME_KEY),
+        None,
+    )
+    if hostname_def is not None:
+        try:
+            hostname_data = await client.read_string_parameter(
+                mi=hostname_def.mi,
+                mx=hostname_def.mx,
+                ox=hostname_def.ox,
+                os_val=hostname_def.os,
+                vs=hostname_def.vs,
+            )
+        except AttributeError:
+            hostname_data = None
+        if hostname_data and hostname_data.get("value_string") is not None:
+            supported.append(hostname_def)
+            static_data[NETWORK_HOSTNAME_KEY] = hostname_data
+
+    return supported, static_data
+
+
+def _signed_value(raw_value: int, value_size: int) -> int:
+    """Return raw_value interpreted as a signed big-endian integer."""
+    sign_bit = 1 << (value_size * 8 - 1)
+    full_range = 1 << (value_size * 8)
+    if raw_value & sign_bit:
+        return raw_value - full_range
+    return raw_value
+
+
+def _integration_version() -> str:
+    """Return the integration manifest version."""
+    manifest_path = Path(__file__).with_name("manifest.json")
+    try:
+        return json.loads(manifest_path.read_text(encoding="utf-8")).get(
+            "version", "unknown"
+        )
+    except (OSError, json.JSONDecodeError):
+        return "unknown"
+
+
+def _snapshot_row(
+    *,
+    key: str,
+    address: dict[str, Any],
+    data: dict[str, Any] | None,
+    source: str,
+    hint: str | None = None,
+    confidence: str | None = None,
+    probable_unit: str | None = None,
+    probable_scale: float | None = None,
+) -> dict[str, Any]:
+    """Build one diagnostic export row without secrets."""
+    raw_unsigned = data.get("value_int") if data is not None else None
+    value_size = int(address["vs"])
+    raw_signed = (
+        _signed_value(raw_unsigned, value_size) if raw_unsigned is not None else None
+    )
+    return {
+        "source": source,
+        "key": key,
+        "mi": f"0x{int(address['mi']):02X}",
+        "mx": f"0x{int(address['mx']):02X}",
+        "ox": f"0x{int(address['ox']):04X}",
+        "os": f"0x{int(address['os']):02X}",
+        "vs": value_size,
+        "raw_hex": (data or {}).get("value_hex", "").upper(),
+        "raw_unsigned": raw_unsigned,
+        "raw_signed": raw_signed,
+        "scaled_x0_1": round(raw_signed * 0.1, 2) if raw_signed is not None else None,
+        "scaled_x0_01": round(raw_signed * 0.01, 2) if raw_signed is not None else None,
+        "candidate_hint": hint,
+        "confidence": confidence,
+        "probable_unit": probable_unit,
+        "probable_scale": probable_scale,
+    }
+
+
+def _snapshot_rows(
+    coordinator: WeishauptDataUpdateCoordinator,
+) -> list[dict[str, Any]]:
+    """Collect rows for regular WTC, network, and experimental diagnostics."""
+    data = coordinator.data or {}
+    rows: list[dict[str, Any]] = []
+    for sensor_def in coordinator.sensor_definitions:
+        if sensor_def.group.value != DEVICE_GROUP_WTC and not sensor_def.key.startswith(
+            "network_"
+        ):
+            continue
+        rows.append(
+            _snapshot_row(
+                key=sensor_def.key,
+                source="regular",
+                address={
+                    "mi": sensor_def.mi,
+                    "mx": sensor_def.mx,
+                    "ox": sensor_def.ox,
+                    "os": sensor_def.os,
+                    "vs": sensor_def.vs,
+                },
+                data=data.get(sensor_def.key),
+                confidence="confirmed" if sensor_def.group.value == DEVICE_GROUP_WTC else "diagnostic",
+            )
+        )
+    for source, registers in (
+        ("curated_experimental", coordinator.experimental_wtc_registers),
+        ("extended_experimental", coordinator.extended_experimental_wtc_registers),
+    ):
+        for register in registers:
+            rows.append(
+                _snapshot_row(
+                    key=register.key,
+                    source=source,
+                    address={
+                        "mi": register.mi,
+                        "mx": register.mx,
+                        "ox": register.ox,
+                        "os": register.os,
+                        "vs": register.vs,
+                    },
+                    data=data.get(register.key),
+                    hint=register.hint,
+                    confidence=register.confidence,
+                    probable_unit=register.probable_unit,
+                    probable_scale=register.probable_scale,
+                )
+            )
+    return rows
+
+
+async def _async_export_experimental_snapshot(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    coordinator: WeishauptDataUpdateCoordinator,
+) -> dict[str, str]:
+    """Export one read-only diagnostic snapshot to JSON and CSV files."""
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    rows = _snapshot_rows(coordinator)
+    payload = {
+        "snapshot_timestamp": datetime.now(timezone.utc).isoformat(),
+        "integration_version": _integration_version(),
+        "host_identifier": entry.data.get(CONF_HOST, ""),
+        "entry_id": entry.entry_id,
+        "values": rows,
+    }
+
+    base_dir = hass.config.path("weishaupt_wtc_lan_diagnostics")
+    os.makedirs(base_dir, exist_ok=True)
+    json_path = os.path.join(base_dir, f"{timestamp}-experimental-snapshot.json")
+    csv_path = os.path.join(base_dir, f"{timestamp}-experimental-snapshot.csv")
+
+    with open(json_path, "w", encoding="utf-8") as json_file:
+        json.dump(payload, json_file, indent=2, sort_keys=True)
+    fieldnames = list(rows[0]) if rows else list(_snapshot_row(
+        key="",
+        source="",
+        address={"mi": 0, "mx": 0, "ox": 0, "os": 0, "vs": 1},
+        data=None,
+    ))
+    with open(csv_path, "w", encoding="utf-8", newline="") as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    return {"json_path": json_path, "csv_path": csv_path}
+
+
+async def _async_register_services(hass: HomeAssistant) -> None:
+    """Register integration services once."""
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    if domain_data.get("_snapshot_service_registered"):
+        return
+
+    async def _handle_export(call) -> None:
+        entry_id = call.data.get("entry_id") if hasattr(call, "data") else None
+        coordinators = {
+            key: value
+            for key, value in hass.data.get(DOMAIN, {}).items()
+            if isinstance(value, WeishauptDataUpdateCoordinator)
+        }
+        if entry_id is None:
+            entry_id = next(iter(coordinators), None)
+        coordinator = coordinators.get(entry_id)
+        if coordinator is None:
+            _LOGGER.warning("No Weishaupt coordinator available for snapshot export")
+            return
+        entry = hass.config_entries.async_get_entry(entry_id)
+        if entry is None:
+            _LOGGER.warning("No Weishaupt config entry available for snapshot export")
+            return
+        paths = await _async_export_experimental_snapshot(hass, entry, coordinator)
+        _LOGGER.info("Exported Weishaupt experimental snapshot: %s", paths)
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_EXPORT_EXPERIMENTAL_SNAPSHOT,
+        _handle_export,
+    )
+    domain_data["_snapshot_service_registered"] = True
 
 
 async def _async_cleanup_inactive_devices(
@@ -201,18 +483,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ),
         )
     )
-    heating_circuit_names = {
+    enable_extended_experimental_wtc_sensors = bool(
+        entry.options.get(
+            CONF_ENABLE_EXTENDED_EXPERIMENTAL_WTC_SENSORS,
+            entry.data.get(
+                CONF_ENABLE_EXTENDED_EXPERIMENTAL_WTC_SENSORS,
+                DEFAULT_ENABLE_EXTENDED_EXPERIMENTAL_WTC_SENSORS,
+            ),
+        )
+    )
+    use_detected_heating_circuit_names = bool(
+        entry.options.get(
+            CONF_USE_DETECTED_HEATING_CIRCUIT_NAMES,
+            entry.data.get(
+                CONF_USE_DETECTED_HEATING_CIRCUIT_NAMES,
+                DEFAULT_USE_DETECTED_HEATING_CIRCUIT_NAMES,
+            ),
+        )
+    )
+    explicit_heating_circuit_names = {
         1: entry.options.get(
             CONF_HK1_NAME,
-            entry.data.get(CONF_HK1_NAME, DEFAULT_HEATING_CIRCUIT_NAMES[1]),
+            entry.data.get(CONF_HK1_NAME, ""),
         ),
         2: entry.options.get(
             CONF_HK2_NAME,
-            entry.data.get(CONF_HK2_NAME, DEFAULT_HEATING_CIRCUIT_NAMES[2]),
+            entry.data.get(CONF_HK2_NAME, ""),
         ),
         3: entry.options.get(
             CONF_HK3_NAME,
-            entry.data.get(CONF_HK3_NAME, DEFAULT_HEATING_CIRCUIT_NAMES[3]),
+            entry.data.get(CONF_HK3_NAME, ""),
         ),
     }
 
@@ -222,6 +522,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         username=username,
         password=password,
         session=session,
+    )
+
+    systable_csv = await client.fetch_systable_csv()
+    systable_groups = (
+        device_groups_from_systable_csv(systable_csv)
+        if systable_csv is not None
+        else None
+    )
+    detected_heating_circuit_names = heating_circuit_names_from_systable_csv(
+        systable_csv
+    )
+    heating_circuit_names = resolve_heating_circuit_names(
+        explicit_heating_circuit_names,
+        detected_heating_circuit_names,
+        use_detected_heating_circuit_names,
+        DEFAULT_HEATING_CIRCUIT_NAMES,
     )
 
     active_heating_circuits = [1]
@@ -234,7 +550,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             inactive_suffixes.add("hk" if circuit_number == 2 else "hk3")
 
     active_device_groups = {DEVICE_GROUP_SYSTEM}
-    systable_groups = await _async_detect_systable_device_groups(client)
 
     wtc_status = _systable_status_for_group(systable_groups, DEVICE_GROUP_WTC)
     if wtc_status == ProbeStatus.UNKNOWN:
@@ -267,11 +582,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         inactive_suffixes.add("sol")
 
     experimental_wtc_registers: list[ExperimentalWtcRegister] = []
+    extended_experimental_wtc_registers: list[ExperimentalWtcRegister] = []
     if enable_experimental_wtc_sensors and DEVICE_GROUP_WTC in active_device_groups:
         experimental_wtc_registers = await _async_probe_experimental_wtc_registers(
             client
         )
-        if not experimental_wtc_registers:
+        if enable_extended_experimental_wtc_sensors:
+            extended_catalog = EXTENDED_EXPERIMENTAL_WTC_REGISTERS[
+                :EXTENDED_EXPERIMENTAL_WTC_MAX_ENTITIES
+            ]
+            extended_experimental_wtc_registers = (
+                await _async_probe_experimental_wtc_registers(
+                    client,
+                    extended_catalog,
+                )
+            )
+        if not experimental_wtc_registers and not extended_experimental_wtc_registers:
             inactive_suffixes.add(EXPERIMENTAL_WTC_DEVICE_SUFFIX)
     else:
         inactive_suffixes.add(EXPERIMENTAL_WTC_DEVICE_SUFFIX)
@@ -280,6 +606,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         active_heating_circuits,
         active_device_groups,
     )
+    sensor_definitions = [
+        await _async_probe_wtc_power_definition(client, sensor_def)
+        for sensor_def in sensor_definitions
+    ]
+    network_sensor_definitions, static_data = await _async_probe_network_sensors(client)
+    if network_sensor_definitions:
+        sensor_definitions.extend(network_sensor_definitions)
+    else:
+        inactive_suffixes.add(NETWORK_DEVICE_SUFFIX)
 
     coordinator = WeishauptDataUpdateCoordinator(
         hass=hass,
@@ -290,12 +625,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         heating_circuit_names=heating_circuit_names,
         active_device_groups=active_device_groups,
         experimental_wtc_registers=experimental_wtc_registers,
+        extended_experimental_wtc_registers=extended_experimental_wtc_registers,
+        static_data=static_data,
     )
 
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
+    await _async_register_services(hass)
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     await _async_cleanup_inactive_devices(

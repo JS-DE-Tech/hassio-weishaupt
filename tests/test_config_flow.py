@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 import sys
 import types
 import unittest
@@ -32,6 +33,25 @@ sys.modules.setdefault("voluptuous", voluptuous)
 homeassistant_pkg = types.ModuleType("homeassistant")
 homeassistant_pkg.__path__ = []
 sys.modules.setdefault("homeassistant", homeassistant_pkg)
+
+components_pkg = types.ModuleType("homeassistant.components")
+components_pkg.__path__ = []
+sys.modules.setdefault("homeassistant.components", components_pkg)
+
+sensor_component = types.ModuleType("homeassistant.components.sensor")
+sensor_component.SensorDeviceClass = SimpleNamespace(
+    TEMPERATURE="temperature",
+    PRESSURE="pressure",
+    POWER="power",
+    ENERGY="energy",
+    TIMESTAMP="timestamp",
+)
+sensor_component.SensorStateClass = SimpleNamespace(
+    MEASUREMENT="measurement",
+    TOTAL="total",
+    TOTAL_INCREASING="total_increasing",
+)
+sys.modules["homeassistant.components.sensor"] = sensor_component
 
 config_entries = types.ModuleType("homeassistant.config_entries")
 
@@ -71,6 +91,12 @@ const_module = types.ModuleType("homeassistant.const")
 const_module.CONF_HOST = "host"
 const_module.CONF_PASSWORD = "password"
 const_module.CONF_USERNAME = "username"
+const_module.PERCENTAGE = "%"
+const_module.UnitOfEnergy = SimpleNamespace(KILO_WATT_HOUR="kWh")
+const_module.UnitOfPower = SimpleNamespace(KILO_WATT="kW")
+const_module.UnitOfPressure = SimpleNamespace(BAR="bar")
+const_module.UnitOfTemperature = SimpleNamespace(CELSIUS="C")
+const_module.UnitOfTime = SimpleNamespace(HOURS="h")
 sys.modules["homeassistant.const"] = const_module
 
 helpers_pkg = types.ModuleType("homeassistant.helpers")
@@ -148,11 +174,33 @@ class ConfigFlowTests(unittest.IsolatedAsyncioTestCase):
         schema = config_flow._options_schema({})
 
         self.assertIn("enable_experimental_wtc_sensors", schema)
+        self.assertIn("enable_extended_experimental_wtc_sensors", schema)
         self.assertFalse(
             config_flow._normalize_user_input(
                 {"scan_interval": 30}
             )["enable_experimental_wtc_sensors"]
         )
+        self.assertFalse(
+            config_flow._normalize_user_input(
+                {"scan_interval": 30}
+            )["enable_extended_experimental_wtc_sensors"]
+        )
+
+    def test_names_schema_and_detected_toggle_defaults(self) -> None:
+        """Naming schema should expose detected-name toggle and HK fields."""
+        schema = config_flow._names_schema({})
+
+        self.assertIn("use_detected_heating_circuit_names", schema)
+        self.assertIn("hk1_name", schema)
+        normalized = config_flow._normalize_user_input(
+            {
+                "scan_interval": 30,
+                "hk1_name": "  Manual  ",
+                "use_detected_heating_circuit_names": True,
+            }
+        )
+        self.assertTrue(normalized["use_detected_heating_circuit_names"])
+        self.assertEqual(normalized["hk1_name"], "Manual")
 
     async def test_options_store_experimental_boolean(self) -> None:
         """Options flow should store the experimental boolean."""
@@ -164,10 +212,14 @@ class ConfigFlowTests(unittest.IsolatedAsyncioTestCase):
             {
                 "scan_interval": 60,
                 "enable_experimental_wtc_sensors": True,
+                "enable_extended_experimental_wtc_sensors": True,
+                "use_detected_heating_circuit_names": False,
             }
         )
 
         self.assertTrue(result["data"]["enable_experimental_wtc_sensors"])
+        self.assertTrue(result["data"]["enable_extended_experimental_wtc_sensors"])
+        self.assertFalse(result["data"]["use_detected_heating_circuit_names"])
 
 
 if __name__ == "__main__":

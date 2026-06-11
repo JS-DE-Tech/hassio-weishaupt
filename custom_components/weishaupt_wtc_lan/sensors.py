@@ -76,6 +76,10 @@ class ExperimentalWtcRegister:
     os: int
     vs: int
     hint: str
+    confidence: str = "experimental"
+    probable_unit: str | None = None
+    probable_scale: float | None = None
+    notes: str | None = None
 
     @property
     def name(self) -> str:
@@ -206,6 +210,11 @@ FOLGEWECHSEL_MAP = {
 PUMPE_MAP = {
     0: "Aus",
     1: "Ein",
+}
+
+IP_MODE_MAP = {
+    0: "Static",
+    1: "DHCP",
 }
 
 
@@ -857,6 +866,7 @@ SG_SENSORS: list[WeishauptSensorDefinition] = [
         modbus_reg="150",
         icon="mdi:clock-outline",
         entity_category="diagnostic",
+        entity_registry_enabled_default=False,
     ),
     WeishauptSensorDefinition(
         key="sg_uhrzeit_minuten",
@@ -870,6 +880,7 @@ SG_SENSORS: list[WeishauptSensorDefinition] = [
         modbus_reg="151",
         icon="mdi:clock-outline",
         entity_category="diagnostic",
+        entity_registry_enabled_default=False,
     ),
     WeishauptSensorDefinition(
         key="sg_datum_tag",
@@ -883,6 +894,7 @@ SG_SENSORS: list[WeishauptSensorDefinition] = [
         modbus_reg="153",
         icon="mdi:calendar-today-outline",
         entity_category="diagnostic",
+        entity_registry_enabled_default=False,
     ),
     WeishauptSensorDefinition(
         key="sg_datum_monat",
@@ -896,6 +908,7 @@ SG_SENSORS: list[WeishauptSensorDefinition] = [
         modbus_reg="154",
         icon="mdi:calendar-month-outline",
         entity_category="diagnostic",
+        entity_registry_enabled_default=False,
     ),
     WeishauptSensorDefinition(
         key="sg_datum_jahr",
@@ -909,6 +922,7 @@ SG_SENSORS: list[WeishauptSensorDefinition] = [
         modbus_reg="155",
         icon="mdi:calendar-range-outline",
         entity_category="diagnostic",
+        entity_registry_enabled_default=False,
     ),
     # Consolidated device time sensor (combines the separate hour/minute/date registers)
     WeishauptSensorDefinition(
@@ -924,6 +938,37 @@ SG_SENSORS: list[WeishauptSensorDefinition] = [
         device_class=SensorDeviceClass.TIMESTAMP,
         entity_category="diagnostic",
         poll=False,
+        entity_registry_enabled_default=False,
+    ),
+    WeishauptSensorDefinition(
+        key="sg_device_date",
+        name="Datum Anlage",
+        mi=0x01,
+        mx=0x00,
+        ox=0x2563,
+        os=0x02,
+        vs=3,
+        group=WeishauptDeviceGroup.SG,
+        modbus_reg="153-155",
+        icon="mdi:calendar",
+        entity_category="diagnostic",
+        poll=False,
+        entity_registry_enabled_default=False,
+    ),
+    WeishauptSensorDefinition(
+        key="sg_device_clock_time",
+        name="Uhrzeit Anlage",
+        mi=0x01,
+        mx=0x00,
+        ox=0x2562,
+        os=0x02,
+        vs=2,
+        group=WeishauptDeviceGroup.SG,
+        modbus_reg="150-151",
+        icon="mdi:clock-outline",
+        entity_category="diagnostic",
+        poll=False,
+        entity_registry_enabled_default=False,
     ),
 ]
 
@@ -1142,6 +1187,126 @@ WTC_SENSORS: list[WeishauptSensorDefinition] = [
         unit=UnitOfTime.HOURS,
         icon="mdi:timer-outline",
     ),
+    WeishauptSensorDefinition(
+        key="wtc_zeit_bis_wartung",
+        name="Zeit bis Wartung",
+        mi=0x09,
+        mx=0x01,
+        ox=0x2641,
+        os=0x00,
+        vs=2,
+        group=WeishauptDeviceGroup.WTC,
+        modbus_reg="confirmed 09/01/2641/00",
+        unit=UnitOfTime.HOURS,
+        icon="mdi:wrench-clock",
+        entity_category="diagnostic",
+        entity_registry_enabled_default=False,
+    ),
+    WeishauptSensorDefinition(
+        key="wtc_wartungsintervall",
+        name="Wartungsintervall",
+        mi=0x09,
+        mx=0x01,
+        ox=0x2642,
+        os=0x00,
+        vs=2,
+        group=WeishauptDeviceGroup.WTC,
+        modbus_reg="confirmed 09/01/2642/00",
+        unit=UnitOfTime.HOURS,
+        icon="mdi:wrench",
+        entity_category="diagnostic",
+        entity_registry_enabled_default=False,
+    ),
+]
+
+
+NETWORK_SENSORS: list[WeishauptSensorDefinition] = [
+    WeishauptSensorDefinition(
+        key="network_hostname",
+        name="Hostname",
+        mi=0x06,
+        mx=0x00,
+        ox=0x2505,
+        os=0x00,
+        vs=64,
+        group=WeishauptDeviceGroup.SG,
+        modbus_reg="network 06/00/2505/00",
+        icon="mdi:server-network",
+        entity_category="diagnostic",
+        poll=False,
+        entity_registry_enabled_default=False,
+    ),
+    WeishauptSensorDefinition(
+        key="network_ip_mode",
+        name="IP Mode",
+        mi=0x06,
+        mx=0x00,
+        ox=0x2507,
+        os=0x00,
+        vs=1,
+        group=WeishauptDeviceGroup.SG,
+        modbus_reg="network 06/00/2507/00",
+        icon="mdi:ip-network",
+        value_map=IP_MODE_MAP,
+        entity_category="diagnostic",
+        entity_registry_enabled_default=False,
+    ),
+    WeishauptSensorDefinition(
+        key="network_ip_address",
+        name="IP Address",
+        mi=0x06,
+        mx=0x00,
+        ox=0x2508,
+        os=0x00,
+        vs=4,
+        group=WeishauptDeviceGroup.SG,
+        modbus_reg="network 06/00/2508/00",
+        icon="mdi:ip",
+        entity_category="diagnostic",
+        entity_registry_enabled_default=False,
+    ),
+    WeishauptSensorDefinition(
+        key="network_subnet_mask",
+        name="Subnet Mask",
+        mi=0x06,
+        mx=0x00,
+        ox=0x2509,
+        os=0x00,
+        vs=4,
+        group=WeishauptDeviceGroup.SG,
+        modbus_reg="network 06/00/2509/00",
+        icon="mdi:lan",
+        entity_category="diagnostic",
+        entity_registry_enabled_default=False,
+    ),
+    WeishauptSensorDefinition(
+        key="network_gateway",
+        name="Gateway",
+        mi=0x06,
+        mx=0x00,
+        ox=0x250A,
+        os=0x00,
+        vs=4,
+        group=WeishauptDeviceGroup.SG,
+        modbus_reg="network 06/00/250A/00",
+        icon="mdi:router-network",
+        entity_category="diagnostic",
+        entity_registry_enabled_default=False,
+    ),
+    WeishauptSensorDefinition(
+        key="network_dns_server",
+        name="DNS Server",
+        mi=0x06,
+        mx=0x00,
+        ox=0x250B,
+        os=0x00,
+        vs=4,
+        group=WeishauptDeviceGroup.SG,
+        modbus_reg="network 06/00/250B/00",
+        icon="mdi:dns",
+        entity_category="diagnostic",
+        entity_registry_enabled_default=False,
+    ),
 ]
 
 
@@ -1149,7 +1314,17 @@ EXPERIMENTAL_WTC_HINT = "Unconfirmed dynamic WTC value"
 
 
 def _experimental_wtc_register(
-    mi: int, mx: int, ox: int, os: int, vs: int
+    mi: int,
+    mx: int,
+    ox: int,
+    os: int,
+    vs: int,
+    *,
+    hint: str = EXPERIMENTAL_WTC_HINT,
+    confidence: str = "experimental",
+    probable_unit: str | None = None,
+    probable_scale: float | None = None,
+    notes: str | None = None,
 ) -> ExperimentalWtcRegister:
     return ExperimentalWtcRegister(
         key=f"wtc_experimental_{mi:02x}_{mx:02x}_{ox:04x}_{os:02x}_{vs:02d}",
@@ -1158,16 +1333,70 @@ def _experimental_wtc_register(
         ox=ox,
         os=os,
         vs=vs,
-        hint=EXPERIMENTAL_WTC_HINT,
+        hint=hint,
+        confidence=confidence,
+        probable_unit=probable_unit,
+        probable_scale=probable_scale,
+        notes=notes,
     )
 
 
 EXPERIMENTAL_WTC_REGISTERS: tuple[ExperimentalWtcRegister, ...] = (
-    _experimental_wtc_register(0x09, 0x01, 0x2610, 0x02, 2),
-    _experimental_wtc_register(0x09, 0x01, 0x2611, 0x02, 2),
-    _experimental_wtc_register(0x09, 0x01, 0x2612, 0x02, 2),
-    _experimental_wtc_register(0x09, 0x01, 0x2615, 0x02, 2),
-    _experimental_wtc_register(0x09, 0x01, 0x2619, 0x02, 1),
+    _experimental_wtc_register(
+        0x09,
+        0x01,
+        0x2610,
+        0x02,
+        2,
+        hint="Unconfirmed temperature-related WTC value",
+        confidence="candidate",
+        probable_unit="\u00b0C",
+        probable_scale=0.1,
+    ),
+    _experimental_wtc_register(
+        0x09,
+        0x01,
+        0x2611,
+        0x02,
+        2,
+        hint="Unconfirmed temperature-related WTC value",
+        confidence="candidate",
+        probable_unit="\u00b0C",
+        probable_scale=0.1,
+    ),
+    _experimental_wtc_register(
+        0x09,
+        0x01,
+        0x2612,
+        0x02,
+        2,
+        hint="Unconfirmed temperature-related WTC value",
+        confidence="candidate",
+        probable_unit="\u00b0C",
+        probable_scale=0.1,
+    ),
+    _experimental_wtc_register(
+        0x09,
+        0x01,
+        0x2615,
+        0x02,
+        2,
+        hint="Likely VPT flow temperature",
+        confidence="probable",
+        probable_unit="\u00b0C",
+        probable_scale=0.1,
+    ),
+    _experimental_wtc_register(
+        0x09,
+        0x01,
+        0x2619,
+        0x02,
+        1,
+        hint="Likely internal pump modulation",
+        confidence="probable",
+        probable_unit="%",
+        probable_scale=1.0,
+    ),
     _experimental_wtc_register(0x09, 0x01, 0x263A, 0x02, 2),
     _experimental_wtc_register(0x09, 0x01, 0x2679, 0x00, 2),
     _experimental_wtc_register(0x09, 0x01, 0x268A, 0x00, 4),
@@ -1183,6 +1412,10 @@ EXPERIMENTAL_WTC_REGISTERS: tuple[ExperimentalWtcRegister, ...] = (
     _experimental_wtc_register(0x09, 0x01, 0x2908, 0x00, 2),
     _experimental_wtc_register(0x09, 0x01, 0x2922, 0x00, 1),
 )
+
+
+EXTENDED_EXPERIMENTAL_WTC_REGISTERS: tuple[ExperimentalWtcRegister, ...] = ()
+EXTENDED_EXPERIMENTAL_WTC_MAX_ENTITIES = 100
 
 
 # ============================================================================

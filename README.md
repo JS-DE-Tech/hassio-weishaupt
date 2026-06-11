@@ -181,11 +181,12 @@ Once these requirements are met, the integration can be added to Home Assistant.
 2. Select **Add Integration**.
 3. Search for **Weishaupt WTC**.
 4. Enter the IP address or hostname of the Systemgerät.
-5. Optionally adjust the username, password, polling interval, and heating-circuit display names.
+5. Optionally adjust the username, password, polling interval, and experimental diagnostics toggles.
+6. Review the detected heating-circuit display names and edit them if needed.
 
 The polling interval can be configured from **10 to 600 seconds** in steps of **10 seconds**.
 
-The same options can be changed later from the integration options. Saving the options reloads the integration so the new polling interval and display names take effect without removing the integration.
+The same options can be changed later from the integration options. Saving the options reloads the integration so the new polling interval, display names, and diagnostic options take effect without removing the integration.
 
 Heating-circuit names are display names only. Entity unique IDs, device identifiers, and CanApiJson register addresses remain stable when names are changed.
 
@@ -201,10 +202,39 @@ Enable experimental read-only WTC sensors
 ```
 
 The experimental sensors are intended for real-hardware correlation testing.
-They expose raw values and derived attributes but do not provide write support.
+They expose raw values, address metadata, confidence hints, and derived raw
+attributes but do not provide write support.
 
 The feature is disabled by default. When disabled, no experimental device,
 entities, setup probes, or polling requests are added.
+
+A second option is available for a broader explicitly curated catalog:
+
+```text
+Enable extended experimental read-only WTC sensors
+```
+
+This option is also disabled by default and is only evaluated when the curated
+experimental option is enabled. The extended catalog is capped at 100 explicitly
+listed entities and is currently empty because the committed discovery artifacts
+are broad scan outputs, not a defensible curated address list.
+
+For correlation work, call the Home Assistant service:
+
+```text
+weishaupt_wtc_lan.export_experimental_snapshot
+```
+
+It writes JSON and CSV files under:
+
+```text
+/config/weishaupt_wtc_lan_diagnostics/
+```
+
+The snapshot includes regular WTC values, network diagnostics when available,
+curated experimental values, and extended experimental values when enabled. It
+does not export passwords, authorization headers, tokens, cookies, or other
+credentials.
 
 ## Device Detection and Naming
 
@@ -216,7 +246,14 @@ When available, the local read-only inventory file:
 /sd/systable.csv
 ```
 
-is used to detect installed modules and to derive default display names.
+is used to detect installed modules and to derive default display names. Name
+resolution is:
+
+```text
+explicit non-empty user override
+-> detected systable.csv name
+-> generic fallback
+```
 
 Observed example from a real installation:
 
@@ -246,7 +283,8 @@ The Systemgerät device contains system-wide values:
 - upper and lower buffer-storage temperatures
 - selected cascade values
 - CANopen error/warning diagnostic block
-- date and time values
+- combined date/time value
+- separate diagnostic device date and clock-time values
 
 ### HK1 — Integrated Heating Circuit
 
@@ -320,6 +358,8 @@ The WTC boiler device contains boiler-specific runtime values:
 - VPT volume flow
 - system pressure
 - VPT thermal output
+- remaining time until maintenance
+- maintenance interval
 - burner starts total
 - burner operating hours total
 - previous-day heat quantity:
@@ -329,11 +369,36 @@ The WTC boiler device contains boiler-specific runtime values:
 
 The flue-gas-temperature and return-temperature registers were empirically confirmed on real hardware.
 
+`VPT thermal output` is probed adaptively during setup. The integration tries
+the confirmed address with `VS=4` first and falls back to `VS=2` for devices
+that return a shorter response. A raw value of `0` remains a valid `0.0 kW`
+state.
+
 The regular WTC boiler device also exposes the empirically confirmed
 `Burner Starts Total` and `Burner Operating Hours Total` counters. Mirrored
 counter addresses exist on tested hardware, but the integration uses only
 `09/01/2920/00` and `09/01/2921/00` for these regular entities until the
 resettable-vs-lifetime distinction is verified further.
+
+The maintenance values are read-only diagnostics. They were empirically
+confirmed on tested hardware but are not used for reset or write operations.
+
+### WEM Network Diagnostics
+
+When at least one network value responds, the integration creates a separate
+read-only `WEM Network Diagnostics` device attached to the Systemgeraet device.
+
+Entities include:
+
+- hostname, when the optional string read is supported
+- IP mode
+- IP address
+- subnet mask
+- gateway
+- DNS server
+
+Network entities are diagnostic and disabled by default in the entity registry.
+No credentials, passwords, or HTTP authorization data are exposed.
 
 ### Solar
 

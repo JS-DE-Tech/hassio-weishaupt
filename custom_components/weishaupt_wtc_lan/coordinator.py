@@ -49,6 +49,8 @@ class WeishauptDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         heating_circuit_names: dict[int, str] | None = None,
         active_device_groups: set[str] | None = None,
         experimental_wtc_registers: list[ExperimentalWtcRegister] | None = None,
+        extended_experimental_wtc_registers: list[ExperimentalWtcRegister] | None = None,
+        static_data: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the coordinator."""
         super().__init__(
@@ -66,6 +68,10 @@ class WeishauptDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.heating_circuit_names = heating_circuit_names or {}
         self.active_device_groups = active_device_groups or set()
         self.experimental_wtc_registers = experimental_wtc_registers or []
+        self.extended_experimental_wtc_registers = (
+            extended_experimental_wtc_registers or []
+        )
+        self.static_data = static_data or {}
 
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from the Weishaupt device."""
@@ -82,6 +88,17 @@ class WeishauptDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 }
             )
         for register in self.experimental_wtc_registers:
+            params.append(
+                {
+                    "key": register.key,
+                    "mi": register.mi,
+                    "mx": register.mx,
+                    "ox": register.ox,
+                    "os": register.os,
+                    "vs": register.vs,
+                }
+            )
+        for register in self.extended_experimental_wtc_registers:
             params.append(
                 {
                     "key": register.key,
@@ -132,4 +149,4 @@ class WeishauptDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 data.get("value_int"),
             )
 
-        return results
+        return {**self.static_data, **results}
