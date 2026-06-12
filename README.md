@@ -1,11 +1,10 @@
-# Weishaupt WTC LAN for Home Assistant
+<p align="center">
+  <img src="icon.png"
+       alt="Weishaupt WTC LAN"
+       width="140">
+</p>
 
-<p align="left">
-  <img src="https://raw.githubusercontent.com/JS-DE-Tech/hacs-weishaupt-lan/main/docs/images/system.png"
-       alt="Weishaupt WTC heating system"
-       width="620">
-</p>
-</p>
+# Weishaupt WTC LAN for Home Assistant
 
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-Custom%20Integration-41BDF5?logo=home-assistant&logoColor=white)](https://www.home-assistant.io/)
 [![HACS](https://img.shields.io/badge/HACS-Custom%20Repository-41BDF5)](https://hacs.xyz/)
@@ -13,9 +12,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](https://github.com/JS-DE-Tech/hacs-weishaupt-lan/blob/main/LICENSE)
 [![Support via PayPal](https://img.shields.io/badge/Support%20via-PayPal-0070BA?logo=paypal&logoColor=white)](https://paypal.me/JensSaffrich)
 
-Custom Home Assistant integration for Weishaupt heating systems using the local **CanApiJson** protocol (JSON over HTTP).
-
-The integration communicates directly with the **Weishaupt Systemgerät (SG)** on the local network. No cloud connection is required.
+Local Home Assistant integration for Weishaupt heating systems. The integration
+communicates directly with the Weishaupt system device (SG) over the local LAN
+and reads heating data through the CanApiJson JSON interface. No cloud
+connection is required.
 
 > [!WARNING]
 > Use this integration at your own risk. Some entities can write values to the heating system. Always verify changes directly on your installation.
@@ -156,8 +156,12 @@ Once these requirements are met, the integration can be added to Home Assistant.
 3. Open the menu in the upper-right corner.
 4. Select **Custom repositories**.
 5. Add this repository URL and select **Integration** as the category.
-6. Install **Weishaupt WTC**.
+6. Install **Weishaupt WTC LAN**.
 7. Restart Home Assistant.
+
+The local `icon.png` is included for repository and HACS presentation. It does
+not automatically create a native Home Assistant frontend brand icon for the
+custom domain `weishaupt_wtc_lan`.
 
 ### Manual Installation
 
@@ -179,7 +183,7 @@ Once these requirements are met, the integration can be added to Home Assistant.
 
 1. Go to **Settings** → **Devices & Services**.
 2. Select **Add Integration**.
-3. Search for **Weishaupt WTC**.
+3. Search for **Weishaupt WTC LAN**.
 4. Enter the IP address or hostname of the Systemgerät.
 5. Optionally adjust the username, password, polling interval, and experimental diagnostics toggles.
 6. Review the detected heating-circuit display names and edit them if needed.
