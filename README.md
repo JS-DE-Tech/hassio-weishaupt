@@ -1,10 +1,11 @@
-<p align="center">
-  <img src="icon.png"
-       alt="Weishaupt WTC LAN"
-       width="140">
-</p>
-
 # Weishaupt WTC LAN for Home Assistant
+
+<p align="left">
+  <img src="https://raw.githubusercontent.com/JS-DE-Tech/hacs-weishaupt-lan/main/docs/images/system.png"
+       alt="Weishaupt WTC heating system"
+       width="620">
+</p>
+</p>
 
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-Custom%20Integration-41BDF5?logo=home-assistant&logoColor=white)](https://www.home-assistant.io/)
 [![HACS](https://img.shields.io/badge/HACS-Custom%20Repository-41BDF5)](https://hacs.xyz/)
